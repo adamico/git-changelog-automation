@@ -465,11 +465,10 @@ release_version() {
     mv "$CHANGELOG_FILE.new" "$CHANGELOG_FILE"
     print_color "$GREEN" "Released as [$version]" >&2
     
-    # Update VERSION file if it exists in project
-    if [ -f "$PROJECT_DIR/VERSION" ]; then
-        echo "$version" > "$PROJECT_DIR/VERSION"
-        print_color "$GREEN" "Updated VERSION file to $version" >&2
-    fi
+    # Update or create VERSION file
+    echo "$version" > "$PROJECT_DIR/VERSION"
+    print_color "$GREEN" "Updated VERSION file to $version" >&2
+
     
     return 0
 }
