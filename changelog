@@ -145,6 +145,47 @@ get_latest_tag() {
     git describe --tags --abbrev=0 2>/dev/null || echo ""
 }
 
+# Clean duplicate entries from CHANGELOG
+clean_duplicates() {
+    if [ ! -f "$CHANGELOG_FILE" ]; then
+        print_color "$YELLOW" "No CHANGELOG.md found"
+        return 1
+    fi
+    
+    print_color "$BLUE" "Scanning CHANGELOG for duplicate entries..."
+    
+    # Create temp file for cleaned changelog  
+    local temp_clean="${CHANGELOG_FILE}.clean"
+    local duplicates_found=0
+    
+    # Use awk to remove duplicate commit lines while preserving order
+    awk '
+    /^- (feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert):/ {
+        if (seen[$0]++) {
+            next  # Skip duplicate
+        }
+    }
+    { print }
+    ' "$CHANGELOG_FILE" > "$temp_clean"
+    
+    # Count how many lines were removed
+    local original_lines=$(wc -l < "$CHANGELOG_FILE")
+    local cleaned_lines=$(wc -l < "$temp_clean")
+    duplicates_found=$((original_lines - cleaned_lines))
+    
+    if [ "$duplicates_found" -gt 0 ]; then
+        print_color "$GREEN" "✓ Removed $duplicates_found duplicate entries"
+        cp "$CHANGELOG_FILE" "${CHANGELOG_FILE}.backup"
+        mv "$temp_clean" "$CHANGELOG_FILE"
+        print_color "$GREEN" "✓ CHANGELOG cleaned (backup saved)"
+        return 0
+    else
+        print_color "$GREEN" "✓ No duplicates found"
+        rm -f "$temp_clean"
+        return 0
+    fi
+}
+
 # Get list of commits already documented in CHANGELOG
 get_existing_commits() {
     if [ ! -f "$CHANGELOG_FILE" ]; then
@@ -629,6 +670,7 @@ show_help() {
     echo "  changelog [OPTIONS] [from_tag] [to_tag]"
     echo "  changelog --release VERSION [DATE]"
     echo "  changelog --install-hooks"
+    echo "  changelog --clean"
     echo "  changelog --help"
     echo ""
     print_color "$YELLOW" "EXAMPLES:"
@@ -643,6 +685,7 @@ show_help() {
     print_color "$GREEN" "  changelog -r 1.2.0 -y               ${NC}  # Release and auto-accept"
     echo ""
     print_color "$GREEN" "  changelog --install-hooks           ${NC}  # Install git hooks for validation"
+    print_color "$GREEN" "  changelog --clean                   ${NC}  # Remove duplicate entries from CHANGELOG"
     echo ""
     print_color "$YELLOW" "AUTOMATIC UPDATES:"
     echo "  When releasing a version, the tool automatically:"
@@ -719,6 +762,10 @@ main() {
                 ;;
             --install-hooks)
                 install_hooks
+                exit $?
+                ;;
+            --clean)
+                clean_duplicates
                 exit $?
                 ;;
             --version|-v)
