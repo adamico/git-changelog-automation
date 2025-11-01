@@ -9,7 +9,7 @@
 #   changelog [from_tag] [to_tag]           # Generate changelog
 #   changelog --release VERSION [DATE]      # Release version
 #   changelog --install-hooks               # Install git hooks
-#   changelog --help                        # Show help
+    echo ""
 #
 
 set -e
@@ -605,6 +605,11 @@ show_help() {
     print_color "$GREEN" "  changelog -r 1.2.0 -y               ${NC}  # Release and auto-accept"
     echo ""
     print_color "$GREEN" "  changelog --install-hooks           ${NC}  # Install git hooks for validation"
+    echo ""
+    print_color "$YELLOW" "AUTOMATIC UPDATES:"
+    echo "  When releasing a version, the tool automatically:"
+    echo "    • Creates/updates VERSION file with the new version"
+    echo "    • Updates README.md version badge (if present)"
     echo ""
     print_color "$YELLOW" "OPTIONS:"
     echo "  --non-interactive, --auto-accept, -y"
