@@ -573,7 +573,7 @@ show_help() {
     print_color "$GREEN" "  changelog -y                        ${NC}# Generate from last tag, auto-accept"
     echo ""
     print_color "$GREEN" "  changelog --release 1.2.0           ${NC}# Convert unreleased to [1.2.0]"
-    print_color "$GREEN" "  changelog --release v1.2.0 2025-11-01  ${NC}# Release with specific date"
+    print_color "$GREEN" "  changelog --release v1.2.0 2025-11-01 ${NC}# Release with specific date"
     print_color "$GREEN" "  changelog -r 1.2.0 -y               ${NC}# Release and auto-accept"
     echo ""
     print_color "$GREEN" "  changelog --install-hooks           ${NC}# Install git hooks for validation"
