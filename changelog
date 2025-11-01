@@ -397,6 +397,31 @@ interactive_update() {
 }
 
 # Release [Unreleased] to a version
+# Update README version badge if it exists
+update_readme_badge() {
+    local version=$1
+    local readme_file="$PROJECT_DIR/README.md"
+    
+    # Check if README.md exists
+    if [ ! -f "$readme_file" ]; then
+        return 0  # No README, nothing to do
+    fi
+    
+    # Check if README has a version badge
+    if ! grep -q "version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue" "$readme_file" 2>/dev/null; then
+        return 0  # No version badge found, nothing to do
+    fi
+    
+    print_color "$BLUE" "Updating README.md version badge to $version..." >&2
+    
+    # Update the version badge
+    sed -i "s/version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue/version-$version-blue/g" "$readme_file"
+    
+    print_color "$GREEN" "✓ README.md version badge updated to $version" >&2
+    
+    return 0
+}
+
 release_version() {
     local version=$1
     local release_date=${2:-$(date +%Y-%m-%d)}
@@ -468,6 +493,9 @@ release_version() {
     # Update or create VERSION file
     echo "$version" > "$PROJECT_DIR/VERSION"
     print_color "$GREEN" "Updated VERSION file to $version" >&2
+    
+    # Update README badge if it exists
+    update_readme_badge "$version"
 
     
     return 0
