@@ -553,69 +553,68 @@ HOOK_EOF
 }
 
 # Show help
+# Show help
 show_help() {
-    cat << EOF
-${BLUE}Git Changelog Automation v$VERSION${NC}
-
-Automatically generate changelogs from conventional commits.
-
-${YELLOW}USAGE:${NC}
-  changelog [OPTIONS] [from_tag] [to_tag]
-  changelog --release VERSION [DATE]
-  changelog --install-hooks
-  changelog --help
-
-${YELLOW}EXAMPLES:${NC}
-  changelog                           ${BLUE}# Generate from last tag to HEAD${NC}
-  changelog v1.0.0                    ${BLUE}# Generate from v1.0.0 to HEAD${NC}
-  changelog v1.0.0 v1.1.0             ${BLUE}# Generate from v1.0.0 to v1.1.0${NC}
-  changelog --auto-accept v1.0.0      ${BLUE}# Generate and auto-accept${NC}
-  changelog -y                        ${BLUE}# Generate from last tag, auto-accept${NC}
-  
-  changelog --release 1.2.0           ${BLUE}# Convert unreleased to [1.2.0]${NC}
-  changelog --release v1.2.0 2025-11-01  ${BLUE}# Release with specific date${NC}
-  changelog -r 1.2.0 -y               ${BLUE}# Release and auto-accept${NC}
-  
-  changelog --install-hooks           ${BLUE}# Install git hooks for validation${NC}
-
-${YELLOW}OPTIONS:${NC}
-  --non-interactive, --auto-accept, -y
-                    Auto-accept changes without prompting
-  --release VERSION [DATE], -r VERSION [DATE]
-                    Convert unreleased section to a version release
-                    DATE defaults to today if not specified
-  --install-hooks   Install git hooks for commit validation
-  --version, -v     Show version information
-  --help, -h        Show this help message
-
-${YELLOW}CONVENTIONAL COMMITS:${NC}
-  Supported commit types:
-    feat      - New features (Added section)
-    fix       - Bug fixes (Fixed section)
-    refactor  - Code changes (Changed section)
-    perf      - Performance improvements
-    docs      - Documentation changes
-    style     - Code style changes
-    test      - Test additions/modifications
-    build     - Build system changes
-    ci        - CI/CD changes
-    chore     - Maintenance tasks
-    revert    - Reverted changes
-
-${YELLOW}ENVIRONMENT VARIABLES:${NC}
-  CHANGELOG_FILE       Path to CHANGELOG.md (default: ./CHANGELOG.md)
-  PROJECT_DIR          Project root directory (default: current directory)
-  GIT_CHANGELOG_CONFIG Path to config YAML (optional)
-
-${YELLOW}AUTOMATION:${NC}
-  Use --auto-accept for CI/CD pipelines and automated workflows.
-  The tool will skip interactive prompts and apply changes automatically.
-
-${YELLOW}MORE INFO:${NC}
-  Documentation: https://github.com/adamico/git-changelog-automation
-  Report issues: https://github.com/adamico/git-changelog-automation/issues
-
-EOF
+    print_color "$BLUE" "Git Changelog Automation v$VERSION"
+    echo ""
+    echo "Automatically generate changelogs from conventional commits."
+    echo ""
+    print_color "$YELLOW" "USAGE:"
+    echo "  changelog [OPTIONS] [from_tag] [to_tag]"
+    echo "  changelog --release VERSION [DATE]"
+    echo "  changelog --install-hooks"
+    echo "  changelog --help"
+    echo ""
+    print_color "$YELLOW" "EXAMPLES:"
+    print_color "$GREEN" "  changelog                           ${NC}# Generate from last tag to HEAD"
+    print_color "$GREEN" "  changelog v1.0.0                    ${NC}# Generate from v1.0.0 to HEAD"
+    print_color "$GREEN" "  changelog v1.0.0 v1.1.0             ${NC}# Generate from v1.0.0 to v1.1.0"
+    print_color "$GREEN" "  changelog --auto-accept v1.0.0      ${NC}# Generate and auto-accept"
+    print_color "$GREEN" "  changelog -y                        ${NC}# Generate from last tag, auto-accept"
+    echo ""
+    print_color "$GREEN" "  changelog --release 1.2.0           ${NC}# Convert unreleased to [1.2.0]"
+    print_color "$GREEN" "  changelog --release v1.2.0 2025-11-01  ${NC}# Release with specific date"
+    print_color "$GREEN" "  changelog -r 1.2.0 -y               ${NC}# Release and auto-accept"
+    echo ""
+    print_color "$GREEN" "  changelog --install-hooks           ${NC}# Install git hooks for validation"
+    echo ""
+    print_color "$YELLOW" "OPTIONS:"
+    echo "  --non-interactive, --auto-accept, -y"
+    echo "                    Auto-accept changes without prompting"
+    echo "  --release VERSION [DATE], -r VERSION [DATE]"
+    echo "                    Convert unreleased section to a version release"
+    echo "                    DATE defaults to today if not specified"
+    echo "  --install-hooks   Install git hooks for commit validation"
+    echo "  --version, -v     Show version information"
+    echo "  --help, -h        Show this help message"
+    echo ""
+    print_color "$YELLOW" "CONVENTIONAL COMMITS:"
+    echo "  Supported commit types:"
+    echo "    feat      - New features (Added section)"
+    echo "    fix       - Bug fixes (Fixed section)"
+    echo "    refactor  - Code changes (Changed section)"
+    echo "    perf      - Performance improvements"
+    echo "    docs      - Documentation changes"
+    echo "    style     - Code style changes"
+    echo "    test      - Test additions/modifications"
+    echo "    build     - Build system changes"
+    echo "    ci        - CI/CD changes"
+    echo "    chore     - Maintenance tasks"
+    echo "    revert    - Reverted changes"
+    echo ""
+    print_color "$YELLOW" "ENVIRONMENT VARIABLES:"
+    echo "  CHANGELOG_FILE       Path to CHANGELOG.md (default: ./CHANGELOG.md)"
+    echo "  PROJECT_DIR          Project root directory (default: current directory)"
+    echo "  GIT_CHANGELOG_CONFIG Path to config YAML (optional)"
+    echo ""
+    print_color "$YELLOW" "AUTOMATION:"
+    echo "  Use --auto-accept for CI/CD pipelines and automated workflows."
+    echo "  The tool will skip interactive prompts and apply changes automatically."
+    echo ""
+    print_color "$YELLOW" "MORE INFO:"
+    echo "  Documentation: https://github.com/adamico/git-changelog-automation"
+    echo "  Report issues: https://github.com/adamico/git-changelog-automation/issues"
+    echo ""
 }
 
 # Main
