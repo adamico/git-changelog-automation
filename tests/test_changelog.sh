@@ -542,6 +542,67 @@ test_readme_badge_skipped_when_absent() {
 }
 
 
+
+test_rebuild_from_tags() {
+    print_color "$YELLOW" "Test: Rebuild CHANGELOG from git tags"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Initialize git repo
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git config tag.gpgsign false
+    
+    # Create some commits and tags
+    echo "v1" > file1.txt
+    git add file1.txt
+    git commit -q -m "feat: add feature one"
+    git tag v1.0.0
+    
+    echo "v2" > file2.txt
+    git add file2.txt
+    git commit -q -m "fix: fix bug one"
+    git commit -q --allow-empty -m "docs: add documentation"
+    git tag v1.1.0
+    
+    echo "v3" > file3.txt
+    git add file3.txt
+    git commit -q -m "feat: add feature two"
+    
+    # Run rebuild (non-interactive, no prompts)
+    CHANGELOG_FILE="$test_dir/CHANGELOG.md" "$GENERATE_SCRIPT" --rebuild >/dev/null 2>&1 || true
+    
+    if [ -f "$test_dir/CHANGELOG.md" ]; then
+        local content=$(cat "$test_dir/CHANGELOG.md")
+        
+        # Check structure
+        assert_contains "$content" "# Changelog" "Has header"
+        assert_contains "$content" "[1.1.0]" "Has v1.1.0 section"
+        assert_contains "$content" "[1.0.0]" "Has v1.0.0 section"
+        
+        # Check commits are in correct sections
+        assert_contains "$content" "feat: add feature one" "Has feature one"
+        assert_contains "$content" "fix: fix bug one" "Has bug fix"
+        assert_contains "$content" "docs: add documentation" "Has docs"
+        assert_contains "$content" "feat: add feature two" "Has feature two in unreleased"
+        
+        # Check proper categorization
+        assert_contains "$content" "### Added" "Has Added section"
+        assert_contains "$content" "### Fixed" "Has Fixed section"
+        assert_contains "$content" "### Documentation" "Has Documentation section"
+    else
+        print_color "$RED" "  ✗ CHANGELOG.md was not created"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
+
 # Main test runner
 main() {
     print_color "$YELLOW" "=== Changelog Generation Script Tests ==="
@@ -567,6 +628,7 @@ main() {
     test_version_file_creation
     test_readme_badge_update
     test_readme_badge_skipped_when_absent
+    test_rebuild_from_tags
     # TODO: Re-enable these tests after implementing/fixing release and sync features
     # test_release_functionality
     # test_sync_validation

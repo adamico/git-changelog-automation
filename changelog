@@ -186,7 +186,148 @@ clean_duplicates() {
     fi
 }
 
-# Get list of commits already documented in CHANGELOG
+# Rebuild entire CHANGELOG from git tag history
+# Get the date of a git tag
+get_tag_date() {
+    local tag=$1
+    git log -1 --format=%ai "$tag" 2>/dev/null | cut -d' ' -f1
+}
+
+# Extract commits by type from a git range
+extract_commits_by_type() {
+    local git_range=$1
+    local commit_type=$2
+    
+    git log --pretty=format:"%s" "$git_range" 2>/dev/null | grep -E "^${commit_type}:" || true
+}
+
+# Add a changelog section with commits
+add_changelog_section() {
+    local section_title=$1
+    local commits=$2
+    local changelog_file=$3
+    
+    if [ -n "$commits" ]; then
+        echo "### $section_title" >> "$changelog_file"
+        echo "$commits" | while IFS= read -r line; do
+            [ -n "$line" ] && echo "- $line" >> "$changelog_file"
+        done
+        echo "" >> "$changelog_file"
+    fi
+}
+
+# Add version section to changelog
+add_version_section() {
+    local version=$1
+    local date=$2
+    local git_range=$3
+    local changelog_file=$4
+    
+    # Extract all commit types
+    local feat=$(extract_commits_by_type "$git_range" "feat")
+    local fix=$(extract_commits_by_type "$git_range" "fix")
+    local docs=$(extract_commits_by_type "$git_range" "docs")
+    local refactor=$(extract_commits_by_type "$git_range" "refactor")
+    local perf=$(extract_commits_by_type "$git_range" "perf")
+    local test=$(extract_commits_by_type "$git_range" "test")
+    local build=$(extract_commits_by_type "$git_range" "build")
+    local ci=$(extract_commits_by_type "$git_range" "ci")
+    local style=$(extract_commits_by_type "$git_range" "style")
+    local chore=$(extract_commits_by_type "$git_range" "chore")
+    local revert=$(extract_commits_by_type "$git_range" "revert")
+    
+    # Only add section if there are commits
+    if [ -z "$feat" ] && [ -z "$fix" ] && [ -z "$docs" ] && \
+       [ -z "$refactor" ] && [ -z "$perf" ] && [ -z "$test" ] && \
+       [ -z "$build" ] && [ -z "$ci" ] && [ -z "$style" ] && \
+       [ -z "$chore" ] && [ -z "$revert" ]; then
+        return 0
+    fi
+    
+    # Add version header
+    echo "## [$version] - $date" >> "$changelog_file"
+    echo "" >> "$changelog_file"
+    
+    # Add sections
+    add_changelog_section "Added" "$feat" "$changelog_file"
+    add_changelog_section "Fixed" "$fix" "$changelog_file"
+    add_changelog_section "Documentation" "$docs" "$changelog_file"
+    add_changelog_section "Changed" "$refactor" "$changelog_file"
+    add_changelog_section "Performance" "$perf" "$changelog_file"
+    add_changelog_section "Tests" "$test" "$changelog_file"
+    add_changelog_section "Build" "$build" "$changelog_file"
+    add_changelog_section "CI/CD" "$ci" "$changelog_file"
+    add_changelog_section "Style" "$style" "$changelog_file"
+    add_changelog_section "Chores" "$chore" "$changelog_file"
+    add_changelog_section "Reverted" "$revert" "$changelog_file"
+}
+
+# Rebuild entire CHANGELOG from git tag history
+rebuild_changelog() {
+    print_color "$BLUE" "Rebuilding CHANGELOG from git tag history..."
+    
+    # Backup existing CHANGELOG
+    if [ -f "$CHANGELOG_FILE" ]; then
+        cp "$CHANGELOG_FILE" "${CHANGELOG_FILE}.backup"
+        print_color "$YELLOW" "✓ Backed up existing CHANGELOG"
+    fi
+    
+    # Create new CHANGELOG with header
+    echo "# Changelog" > "$CHANGELOG_FILE"
+    echo "" >> "$CHANGELOG_FILE"
+    
+    # Get all tags sorted by version (newest first)
+    local tags=$(git tag -l --sort=-version:refname)
+    
+    if [ -z "$tags" ]; then
+        print_color "$YELLOW" "No git tags found. Nothing to rebuild."
+        return 1
+    fi
+    
+    local prev_tag=""
+    local tag_count=0
+    
+    # Process each tag
+    for tag in $tags; do
+        tag_count=$((tag_count + 1))
+        
+        local tag_date=$(get_tag_date "$tag")
+        local version="${tag#v}"
+        
+        print_color "$CYAN" "Processing $tag ($version) - $tag_date..."
+        
+        # Handle first tag (check for unreleased commits)
+        if [ -z "$prev_tag" ]; then
+            if [ "$(git rev-parse HEAD 2>/dev/null)" != "$(git rev-parse "$tag" 2>/dev/null)" ]; then
+                # Add unreleased section
+                print_color "$CYAN" "  Adding unreleased changes after $tag..."
+                add_version_section "Unreleased" "$(date +%Y-%m-%d)" "$tag..HEAD" "$CHANGELOG_FILE"
+            fi
+            prev_tag="$tag"
+        fi
+        
+        # Determine git range for this version
+        local git_range
+        if [ "$tag" = "$prev_tag" ]; then
+            # First tag - all commits up to this tag
+            git_range="$tag"
+        else
+            # Subsequent tags - commits between tags
+            git_range="$tag..$prev_tag"
+            prev_tag="$tag"
+        fi
+        
+        # Add this version's section
+        add_version_section "$version" "$tag_date" "$git_range" "$CHANGELOG_FILE"
+    done
+    
+    print_color "$GREEN" "✓ Rebuilt CHANGELOG with $tag_count versions"
+    if [ -f "${CHANGELOG_FILE}.backup" ]; then
+        print_color "$GREEN" "✓ Backup saved as ${CHANGELOG_FILE}.backup"
+    fi
+    return 0
+}
+
 get_existing_commits() {
     if [ ! -f "$CHANGELOG_FILE" ]; then
         return 0
@@ -671,6 +812,7 @@ show_help() {
     echo "  changelog --release VERSION [DATE]"
     echo "  changelog --install-hooks"
     echo "  changelog --clean"
+    echo "  changelog --rebuild"
     echo "  changelog --help"
     echo ""
     print_color "$YELLOW" "EXAMPLES:"
@@ -686,6 +828,7 @@ show_help() {
     echo ""
     print_color "$GREEN" "  changelog --install-hooks           ${NC}  # Install git hooks for validation"
     print_color "$GREEN" "  changelog --clean                   ${NC}  # Remove duplicate entries from CHANGELOG"
+    print_color "$GREEN" "  changelog --rebuild                 ${NC}  # Rebuild entire CHANGELOG from git tags"
     echo ""
     print_color "$YELLOW" "AUTOMATIC UPDATES:"
     echo "  When releasing a version, the tool automatically:"
@@ -766,6 +909,10 @@ main() {
                 ;;
             --clean)
                 clean_duplicates
+                exit $?
+                ;;
+            --rebuild)
+                rebuild_changelog
                 exit $?
                 ;;
             --version|-v)
