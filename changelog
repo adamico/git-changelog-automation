@@ -145,6 +145,15 @@ get_latest_tag() {
     git describe --tags --abbrev=0 2>/dev/null || echo ""
 }
 
+# Get list of commits already documented in CHANGELOG
+get_existing_commits() {
+    if [ ! -f "$CHANGELOG_FILE" ]; then
+        return 0
+    fi
+    # Extract all lines that look like commit messages (start with "- " and have conventional prefix)
+    grep -E "^- (feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert):" "$CHANGELOG_FILE" 2>/dev/null || true
+}
+
 # Generate changelog
 generate_changelog() {
     local from_ref=$1
@@ -194,6 +203,35 @@ generate_changelog() {
     local chore_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^chore:" || true)
     local revert_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^revert:" || true)
     
+    
+    # Get existing commits from CHANGELOG for deduplication
+    local existing_commits=$(get_existing_commits)
+    
+    # Deduplicate commits by removing already-documented entries
+    deduplicate_commits() {
+        local commits="$1"
+        [ -z "$commits" ] && return 0
+        [ -z "$existing_commits" ] && echo "$commits" && return 0
+        
+        echo "$commits" | while IFS= read -r commit; do
+            [ -z "$commit" ] && continue
+            # Check if this exact commit message is already in CHANGELOG
+            echo "$existing_commits" | grep -Fxq "- $commit" || echo "$commit"
+        done
+    }
+    
+    # Apply deduplication to all commit types
+    feat_commits=$(deduplicate_commits "$feat_commits")
+    fix_commits=$(deduplicate_commits "$fix_commits")
+    docs_commits=$(deduplicate_commits "$docs_commits")
+    refactor_commits=$(deduplicate_commits "$refactor_commits")
+    perf_commits=$(deduplicate_commits "$perf_commits")
+    test_commits=$(deduplicate_commits "$test_commits")
+    build_commits=$(deduplicate_commits "$build_commits")
+    ci_commits=$(deduplicate_commits "$ci_commits")
+    style_commits=$(deduplicate_commits "$style_commits")
+    chore_commits=$(deduplicate_commits "$chore_commits")
+    revert_commits=$(deduplicate_commits "$revert_commits")
     if [ -z "$feat_commits" ] && [ -z "$fix_commits" ] && [ -z "$docs_commits" ] && \
        [ -z "$refactor_commits" ] && [ -z "$perf_commits" ] && [ -z "$test_commits" ] && \
        [ -z "$build_commits" ] && [ -z "$ci_commits" ] && [ -z "$style_commits" ] && \
