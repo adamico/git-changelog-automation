@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.0] - 2025-11-01
+
+### Added
+- feat: automatically update README version badge when releasing
+
+### Documentation
+- docs: add help text for automatic VERSION and README badge updates
+
+### Tests
+- test: add tests for VERSION file and README badge updates
+
 ## [1.0.1] - 2025-11-01
 
 ### Fixed
