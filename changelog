@@ -291,36 +291,36 @@ rebuild_changelog() {
     for tag in $tags; do
         tag_count=$((tag_count + 1))
         
-        local tag_date=$(get_tag_date "$tag")
-        local version="${tag#v}"
-        
-        print_color "$CYAN" "Processing $tag ($version) - $tag_date..."
-        
-        # Handle first tag (check for unreleased commits)
+        # Handle first tag (check for unreleased commits, then continue)
         if [ -z "$prev_tag" ]; then
             if [ "$(git rev-parse HEAD 2>/dev/null)" != "$(git rev-parse "$tag" 2>/dev/null)" ]; then
                 # Add unreleased section
-                print_color "$CYAN" "  Adding unreleased changes after $tag..."
+                print_color "$CYAN" "Adding unreleased changes after $tag..."
                 add_version_section "Unreleased" "$(date +%Y-%m-%d)" "$tag..HEAD" "$CHANGELOG_FILE"
             fi
             prev_tag="$tag"
+            continue  # Skip to next iteration - we'll process this tag then
         fi
         
-        # Determine git range for this version
-        local git_range
-        if [ "$tag" = "$prev_tag" ]; then
-            # First tag - all commits up to this tag
-            git_range="$tag"
-        else
-            # Subsequent tags - commits between tags
-            git_range="$tag..$prev_tag"
-            prev_tag="$tag"
-        fi
+        # Now process the previous (newer) tag using current tag as range boundary
+        local prev_version="${prev_tag#v}"
+        local prev_date=$(get_tag_date "$prev_tag")
+        local git_range="$tag..$prev_tag"
         
-        # Add this version's section
-        add_version_section "$version" "$tag_date" "$git_range" "$CHANGELOG_FILE"
+        print_color "$CYAN" "Processing $prev_tag ($prev_version) - $prev_date..."
+        add_version_section "$prev_version" "$prev_date" "$git_range" "$CHANGELOG_FILE"
+        
+        # Remember current tag for next iteration
+        prev_tag="$tag"
     done
     
+    # After loop: process the last (oldest) tag
+    if [ -n "$prev_tag" ]; then
+        local last_version="${prev_tag#v}"
+        local last_date=$(get_tag_date "$prev_tag")
+        print_color "$CYAN" "Processing $prev_tag ($last_version) - $last_date..."
+        add_version_section "$last_version" "$last_date" "$prev_tag" "$CHANGELOG_FILE"
+    fi
     print_color "$GREEN" "✓ Rebuilt CHANGELOG with $tag_count versions"
     if [ -f "${CHANGELOG_FILE}.backup" ]; then
         print_color "$GREEN" "✓ Backup saved as ${CHANGELOG_FILE}.backup"

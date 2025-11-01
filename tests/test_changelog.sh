@@ -604,6 +604,92 @@ test_rebuild_from_tags() {
 }
 
 # Main test runner
+test_rebuild_commit_isolation() {
+    print_color "$YELLOW" "Test: Rebuild correctly isolates commits per version"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Initialize git repo
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git config tag.gpgsign false
+    
+    # Create v1.0.0 with ONE commit
+    echo "v1" > file1.txt
+    git add file1.txt
+    git commit -q -m "feat: version 1 feature"
+    git tag v1.0.0
+    
+    # Create v1.1.0 with TWO commits
+    echo "v1.1-a" > file2.txt
+    git add file2.txt
+    git commit -q -m "feat: version 1.1 feature A"
+    echo "v1.1-b" > file3.txt
+    git add file3.txt
+    git commit -q -m "fix: version 1.1 fix B"
+    git tag v1.1.0
+    
+    # Create v1.2.0 with THREE commits
+    echo "v1.2-a" > file4.txt
+    git add file4.txt
+    git commit -q -m "feat: version 1.2 feature A"
+    echo "v1.2-b" > file5.txt
+    git add file5.txt
+    git commit -q -m "docs: version 1.2 docs B"
+    echo "v1.2-c" > file6.txt
+    git add file6.txt
+    git commit -q -m "refactor: version 1.2 refactor C"
+    git tag v1.2.0
+    
+    # Run rebuild
+    CHANGELOG_FILE="$test_dir/CHANGELOG.md" "$GENERATE_SCRIPT" --rebuild >/dev/null 2>&1 || true
+    
+    if [ -f "$test_dir/CHANGELOG.md" ]; then
+        local content=$(cat "$test_dir/CHANGELOG.md")
+        
+        # Extract each version section
+        local v120_section=$(sed -n '/^## \[1.2.0\]/,/^## \[1.1.0\]/p' "$test_dir/CHANGELOG.md")
+        local v110_section=$(sed -n '/^## \[1.1.0\]/,/^## \[1.0.0\]/p' "$test_dir/CHANGELOG.md")
+        local v100_section=$(sed -n '/^## \[1.0.0\]/,/^---/p' "$test_dir/CHANGELOG.md")
+        
+        # Count commits in each section (lines starting with "- ")
+        local v120_count=$(echo "$v120_section" | grep -c "^- " || echo 0)
+        local v110_count=$(echo "$v110_section" | grep -c "^- " || echo 0)
+        local v100_count=$(echo "$v100_section" | grep -c "^- " || echo 0)
+        
+        # CRITICAL: Each version should have ONLY its own commits
+        assert_equals "3" "$v120_count" "v1.2.0 has exactly 3 commits"
+        assert_equals "2" "$v110_count" "v1.1.0 has exactly 2 commits"
+        assert_equals "1" "$v100_count" "v1.0.0 has exactly 1 commit"
+        
+        # Verify specific commits are in correct sections
+        assert_contains "$v120_section" "version 1.2 feature A" "v1.2.0 has its feature"
+        assert_contains "$v120_section" "version 1.2 docs B" "v1.2.0 has its docs"
+        assert_contains "$v120_section" "version 1.2 refactor C" "v1.2.0 has its refactor"
+        assert_not_contains "$v120_section" "version 1.1" "v1.2.0 does NOT have v1.1 commits"
+        assert_not_contains "$v120_section" "version 1 feature" "v1.2.0 does NOT have v1.0 commits"
+        
+        assert_contains "$v110_section" "version 1.1 feature A" "v1.1.0 has its feature"
+        assert_contains "$v110_section" "version 1.1 fix B" "v1.1.0 has its fix"
+        assert_not_contains "$v110_section" "version 1.2" "v1.1.0 does NOT have v1.2 commits"
+        assert_not_contains "$v110_section" "version 1 feature" "v1.1.0 does NOT have v1.0 commits"
+        
+        assert_contains "$v100_section" "version 1 feature" "v1.0.0 has its feature"
+        assert_not_contains "$v100_section" "version 1.1" "v1.0.0 does NOT have v1.1 commits"
+        assert_not_contains "$v100_section" "version 1.2" "v1.0.0 does NOT have v1.2 commits"
+    else
+        print_color "$RED" "  ✗ CHANGELOG.md was not created"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
+
 main() {
     print_color "$YELLOW" "=== Changelog Generation Script Tests ==="
     echo ""
@@ -629,6 +715,7 @@ main() {
     test_readme_badge_update
     test_readme_badge_skipped_when_absent
     test_rebuild_from_tags
+    test_rebuild_commit_isolation
     # TODO: Re-enable these tests after implementing/fixing release and sync features
     # test_release_functionality
     # test_sync_validation
