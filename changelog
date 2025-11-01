@@ -1,0 +1,731 @@
+#!/bin/bash
+#
+# Git Changelog Automation
+#
+# A standalone tool for generating changelogs from conventional commits.
+# Parses git history to create categorized changelog entries automatically.
+#
+# Usage:
+#   changelog [from_tag] [to_tag]           # Generate changelog
+#   changelog --release VERSION [DATE]      # Release version
+#   changelog --install-hooks               # Install git hooks
+#   changelog --help                        # Show help
+#
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Version
+VERSION="1.0.0"
+
+# Configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"
+CHANGELOG_FILE="${CHANGELOG_FILE:-$PROJECT_DIR/CHANGELOG.md}"
+CHANGELOG_BACKUP="$CHANGELOG_FILE.backup"
+CONFIG_FILE="${GIT_CHANGELOG_CONFIG:-$PROJECT_DIR/git-conventional-commits.yaml}"
+
+# Print colored message
+print_color() {
+    local color=$1
+    local message=$2
+    echo -e "${color}${message}${NC}"
+}
+
+# Check if git-conventional-commits is available (optional dependency)
+check_dependencies() {
+    if ! command -v npx &> /dev/null; then
+        print_color "$YELLOW" "Note: npx not available. Using built-in commit parsing."
+        return 1
+    fi
+    
+    if ! npx git-conventional-commits version &> /dev/null 2>&1; then
+        print_color "$YELLOW" "Note: git-conventional-commits not found. Using built-in commit parsing."
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate CHANGELOG is in sync with git tags
+validate_changelog_sync() {
+    if [ ! -f "$CHANGELOG_FILE" ]; then
+        return 0  # No changelog yet, nothing to validate
+    fi
+    
+    # Get all version tags (v1.0.0 format or 1.0.0 format)
+    local git_tags=$(git tag -l | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V)
+    
+    if [ -z "$git_tags" ]; then
+        return 0  # No tags yet
+    fi
+    
+    # Get versions from CHANGELOG (extract [X.Y.Z] format)
+    local changelog_versions=$(grep -oP '(?<=## \[)[0-9]+\.[0-9]+\.[0-9]+(?=\])' "$CHANGELOG_FILE" | sort -V)
+    
+    # Find missing versions (in git tags but not in changelog)
+    local missing_versions=""
+    while IFS= read -r tag_version; do
+        if ! echo "$changelog_versions" | grep -q "^${tag_version}$"; then
+            missing_versions="${missing_versions}${tag_version}"$'\n'
+        fi
+    done <<< "$git_tags"
+    
+    if [ -n "$missing_versions" ]; then
+        print_color "$YELLOW" "Warning: CHANGELOG is out of sync with git tags!" >&2
+        print_color "$YELLOW" "Missing versions in CHANGELOG:" >&2
+        echo "$missing_versions" | grep -v '^$' | while read -r version; do
+            local tag_date=$(git log -1 --format=%ad --date=short "v${version}" 2>/dev/null || git log -1 --format=%ad --date=short "${version}" 2>/dev/null)
+            echo "  - $version (tagged on ${tag_date:-unknown})" >&2
+        done
+        echo "" >&2
+        
+        if [ "$auto_accept" = "true" ]; then
+            print_color "$GREEN" "Auto-adding missing versions to CHANGELOG..." >&2
+            add_missing_versions "$missing_versions"
+            return 0
+        fi
+        
+        read -p "Add missing versions to CHANGELOG? (y/n): " -n 1 -r >&2
+        echo "" >&2
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            add_missing_versions "$missing_versions"
+        else
+            print_color "$YELLOW" "Skipping sync. CHANGELOG may be incomplete." >&2
+        fi
+    fi
+}
+
+# Add missing versions to CHANGELOG
+add_missing_versions() {
+    local missing_versions=$1
+    
+    # Backup current changelog
+    cp "$CHANGELOG_FILE" "$CHANGELOG_BACKUP"
+    
+    # Sort missing versions in descending order
+    local sorted_missing=$(echo "$missing_versions" | grep -v '^$' | sort -V -r)
+    
+    # Create entries for each missing version
+    local entries_file=$(mktemp)
+    echo "$sorted_missing" | while read -r version; do
+        local tag_date=$(git log -1 --format=%ad --date=short "v${version}" 2>/dev/null || git log -1 --format=%ad --date=short "${version}" 2>/dev/null)
+        [ -z "$tag_date" ] && tag_date=$(date +%Y-%m-%d)
+        
+        print_color "$GREEN" "Adding version $version to CHANGELOG..." >&2
+        
+        echo "## [$version] - $tag_date"
+        echo ""
+        echo "### Added"
+        echo "- See git history for details: \`git log v${version}\`"
+        echo ""
+    done > "$entries_file"
+    
+    # Rebuild changelog: everything before footer + new entries + footer
+    local temp_file=$(mktemp)
+    sed -n '1,/^---/p' "$CHANGELOG_FILE" | sed '$d' > "$temp_file"
+    cat "$entries_file" >> "$temp_file"
+    sed -n '/^---/,$p' "$CHANGELOG_FILE" >> "$temp_file"
+    
+    mv "$temp_file" "$CHANGELOG_FILE"
+    rm -f "$entries_file" "$CHANGELOG_BACKUP"
+    
+    print_color "$YELLOW" "Note: Added versions before footer. You may want to manually reorder for chronological sorting." >&2
+    print_color "$GREEN" "CHANGELOG synchronized with git tags!" >&2
+}
+
+# Get the latest tag
+get_latest_tag() {
+    git describe --tags --abbrev=0 2>/dev/null || echo ""
+}
+
+# Generate changelog
+generate_changelog() {
+    local from_ref=$1
+    local to_ref=${2:-HEAD}
+    
+    print_color "$BLUE" "Generating changelog..." >&2
+    
+    if [ -z "$from_ref" ]; then
+        from_ref=$(get_latest_tag)
+        if [ -z "$from_ref" ]; then
+            print_color "$YELLOW" "No tags found. Generating changelog from all commits..." >&2
+            from_ref=""
+        else
+            print_color "$GREEN" "Using latest tag: $from_ref" >&2
+        fi
+    fi
+    
+    if [ -n "$from_ref" ]; then
+        print_color "$BLUE" "Changelog range: $from_ref...$to_ref" >&2
+    else
+        print_color "$BLUE" "Generating changelog from all commits to $to_ref" >&2
+    fi
+    
+    # Generate changelog using git log parsing
+    local temp_file
+    temp_file=$(mktemp)
+    
+    print_color "$BLUE" "Parsing commits for conventional format..." >&2
+    
+    local git_range
+    if [ -n "$from_ref" ]; then
+        git_range="$from_ref..$to_ref"
+    else
+        git_range="$to_ref"
+    fi
+    
+    # Extract commits by type
+    local feat_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^feat:" || true)
+    local fix_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^fix:" || true)
+    local docs_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^docs:" || true)
+    local refactor_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^refactor:" || true)
+    local perf_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^perf:" || true)
+    local test_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^test:" || true)
+    local build_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^build:" || true)
+    local ci_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^ci:" || true)
+    local style_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^style:" || true)
+    local chore_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^chore:" || true)
+    local revert_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^revert:" || true)
+    
+    if [ -z "$feat_commits" ] && [ -z "$fix_commits" ] && [ -z "$docs_commits" ] && \
+       [ -z "$refactor_commits" ] && [ -z "$perf_commits" ] && [ -z "$test_commits" ] && \
+       [ -z "$build_commits" ] && [ -z "$ci_commits" ] && [ -z "$style_commits" ] && \
+       [ -z "$chore_commits" ] && [ -z "$revert_commits" ]; then
+        print_color "$YELLOW" "No conventional commits found in range"
+        rm "$temp_file"
+        return 1
+    fi
+    
+    # Generate changelog with sections (in priority order)
+    {
+        echo "## [Unreleased]"
+        echo ""
+        
+        if [ -n "$feat_commits" ]; then
+            echo "### Added"
+            echo "$feat_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$fix_commits" ]; then
+            echo "### Fixed"
+            echo "$fix_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$refactor_commits" ]; then
+            echo "### Changed"
+            echo "$refactor_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$perf_commits" ]; then
+            echo "### Performance"
+            echo "$perf_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$docs_commits" ]; then
+            echo "### Documentation"
+            echo "$docs_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$style_commits" ]; then
+            echo "### Style"
+            echo "$style_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$test_commits" ]; then
+            echo "### Tests"
+            echo "$test_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$build_commits" ]; then
+            echo "### Build"
+            echo "$build_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$ci_commits" ]; then
+            echo "### CI/CD"
+            echo "$ci_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$chore_commits" ]; then
+            echo "### Chores"
+            echo "$chore_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+        
+        if [ -n "$revert_commits" ]; then
+            echo "### Reverted"
+            echo "$revert_commits" | while read -r line; do
+                echo "- $line"
+            done
+            echo ""
+        fi
+    } > "$temp_file"
+    
+    echo "$temp_file"
+    return 0
+}
+
+# Update CHANGELOG.md
+update_changelog() {
+    local generated_file=$1
+    
+    # Backup existing changelog
+    if [ -f "$CHANGELOG_FILE" ]; then
+        cp "$CHANGELOG_FILE" "$CHANGELOG_BACKUP"
+        print_color "$GREEN" "Created backup: $CHANGELOG_BACKUP" >&2
+    fi
+    
+    # Extract sections from generated file
+    local sections=("Added" "Fixed" "Changed" "Performance" "Documentation" "Style" "Tests" "Build" "CI/CD" "Chores" "Reverted")
+    
+    # Function to extract commits for a section
+    extract_section() {
+        local section=$1
+        local file=$2
+        sed -n "/^### $section/,/^### \|^## \|^$/p" "$file" | grep "^- " || true
+    }
+    
+    # Merge sections from existing and new
+    declare -A merged_sections
+    for section in "${sections[@]}"; do
+        local existing=$(extract_section "$section" "$CHANGELOG_FILE" 2>/dev/null || true)
+        local new=$(extract_section "$section" "$generated_file" 2>/dev/null || true)
+        
+        if [ -n "$existing" ] && [ -n "$new" ]; then
+            merged_sections["$section"]=$(echo -e "$existing\n$new" | sort -u)
+        elif [ -n "$existing" ]; then
+            merged_sections["$section"]="$existing"
+        elif [ -n "$new" ]; then
+            merged_sections["$section"]="$new"
+        fi
+    done
+    
+    # Create new changelog with merged content
+    {
+        echo "# Changelog"
+        echo ""
+        
+        # Add sections in order
+        local has_content=false
+        for section in "${sections[@]}"; do
+            if [ -n "${merged_sections[$section]}" ]; then
+                has_content=true
+                echo "### $section"
+                echo "${merged_sections[$section]}"
+                echo ""
+            fi
+        done
+        
+        # If we had content, add extra newline before versions
+        if [ "$has_content" = "true" ]; then
+            echo ""
+        fi
+        
+        # Append all version sections (everything from first ## [version])
+        if [ -f "$CHANGELOG_FILE" ]; then
+            sed -n '/^## \[[0-9]/,$p' "$CHANGELOG_FILE"
+        fi
+    } > "$CHANGELOG_FILE.new"
+    
+    mv "$CHANGELOG_FILE.new" "$CHANGELOG_FILE"
+    print_color "$GREEN" "Updated $CHANGELOG_FILE" >&2
+}
+
+# Interactive mode
+interactive_update() {
+    local auto_accept=$1
+    
+    if [ "$auto_accept" = "true" ]; then
+        print_color "$GREEN" "Auto-accepting changes (non-interactive mode)"
+        rm "$CHANGELOG_BACKUP"
+        return 0
+    fi
+    
+    print_color "$YELLOW" "Generated changelog entries. Review the changes:"
+    echo ""
+    git diff --no-index "$CHANGELOG_BACKUP" "$CHANGELOG_FILE" || true
+    echo ""
+    
+    read -p "Accept these changes? (y/n): " -n 1 -r
+    echo ""
+    
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        print_color "$GREEN" "Changelog updated successfully!"
+        rm "$CHANGELOG_BACKUP"
+        return 0
+    else
+        print_color "$YELLOW" "Reverting changes..."
+        mv "$CHANGELOG_BACKUP" "$CHANGELOG_FILE"
+        return 1
+    fi
+}
+
+# Release [Unreleased] to a version
+release_version() {
+    local version=$1
+    local release_date=${2:-$(date +%Y-%m-%d)}
+    
+    if [ -z "$version" ]; then
+        print_color "$RED" "Error: Version number required for release" >&2
+        echo "Usage: changelog --release VERSION [DATE]" >&2
+        return 1
+    fi
+    
+    # Validate version format (basic semver check)
+    if ! echo "$version" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
+        print_color "$RED" "Error: Invalid version format. Use semver (e.g., 1.2.3 or v1.2.3)" >&2
+        return 1
+    fi
+    
+    # Remove 'v' prefix if present
+    version="${version#v}"
+    
+    print_color "$BLUE" "Releasing unreleased changes as version $version ($release_date)..." >&2
+    
+    # Check if there's unreleased content (between header and first version)
+    local unreleased_content=$(sed -n '/^# Changelog/,/^## \[[0-9]/p' "$CHANGELOG_FILE" | grep "^- " || true)
+    
+    if [ -z "$unreleased_content" ]; then
+        print_color "$YELLOW" "Warning: No unreleased content to release" >&2
+        if [ "$auto_accept" != "true" ]; then
+            read -p "Continue anyway? (y/n): " -n 1 -r >&2
+            echo "" >&2
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                return 1
+            fi
+        else
+            print_color "$GREEN" "Auto-accepting empty content (non-interactive mode)" >&2
+        fi
+    fi
+    
+    # Backup
+    cp "$CHANGELOG_FILE" "$CHANGELOG_BACKUP"
+    print_color "$GREEN" "Created backup: $CHANGELOG_BACKUP" >&2
+    
+    # Create temp file with new structure
+    {
+        # Header
+        echo "# Changelog"
+        echo ""
+        
+        # Convert unreleased content (between header and first version) to new version
+        echo "## [$version] - $release_date"
+        echo ""
+        
+        # Extract content between header and first version
+        sed -n '/^# Changelog/,/^## \[[0-9]/p' "$CHANGELOG_FILE" | \
+            sed '1d;$d' | \
+            sed '/^## \[Unreleased\]/d'
+        
+        echo ""
+        
+        # Append all existing version sections
+        awk '/^## \[[0-9]/ {found=1} found && /^---/ {exit} found {print}' "$CHANGELOG_FILE"
+        
+        # Append footer if exists
+        sed -n '/^---/,$p' "$CHANGELOG_FILE"
+    } > "$CHANGELOG_FILE.new"
+    
+    mv "$CHANGELOG_FILE.new" "$CHANGELOG_FILE"
+    print_color "$GREEN" "Released as [$version]" >&2
+    
+    # Update VERSION file if it exists in project
+    if [ -f "$PROJECT_DIR/VERSION" ]; then
+        echo "$version" > "$PROJECT_DIR/VERSION"
+        print_color "$GREEN" "Updated VERSION file to $version" >&2
+    fi
+    
+    return 0
+}
+
+# Install git hooks
+install_hooks() {
+    print_color "$BLUE" "=== Installing Git Hooks ==="
+    echo ""
+    
+    # Check if .git directory exists
+    if [ ! -d "$PROJECT_DIR/.git" ]; then
+        print_color "$RED" "Error: Not a git repository. Run this from your project root."
+        return 1
+    fi
+    
+    local hooks_target="$PROJECT_DIR/.git/hooks"
+    mkdir -p "$hooks_target"
+    
+    # Install commit-msg hook
+    cat > "$hooks_target/commit-msg" << 'HOOK_EOF'
+#!/bin/bash
+# Validates conventional commit format
+
+commit_msg=$(cat "$1")
+
+if ! echo "$commit_msg" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+'; then
+    echo "❌ Invalid commit message format!"
+    echo ""
+    echo "Commit messages must follow conventional commits format:"
+    echo "  <type>(<scope>): <subject>"
+    echo ""
+    echo "Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert"
+    echo ""
+    echo "Examples:"
+    echo "  feat: add new feature"
+    echo "  fix(parser): resolve parsing error"
+    echo "  docs: update README"
+    exit 1
+fi
+HOOK_EOF
+    
+    # Install prepare-commit-msg hook
+    cat > "$hooks_target/prepare-commit-msg" << 'HOOK_EOF'
+#!/bin/bash
+# Prompts to update changelog for version commits
+
+COMMIT_MSG_FILE=$1
+COMMIT_SOURCE=$2
+
+# Only run for regular commits
+if [ -n "$COMMIT_SOURCE" ]; then
+    exit 0
+fi
+
+commit_msg=$(cat "$COMMIT_MSG_FILE")
+
+# Detect version-related commits
+if echo "$commit_msg" | grep -qiE '^(build|release|chore):.*(version|release|v[0-9]+\.[0-9]+\.[0-9]+)'; then
+    echo "⚠️  Detected a release/version commit"
+    echo "ℹ️  Consider updating CHANGELOG.md before committing"
+    echo ""
+    echo "You can run:"
+    echo "  changelog"
+    echo "  changelog --auto-accept  # For CI/automation"
+    echo ""
+fi
+
+exit 0
+HOOK_EOF
+    
+    chmod +x "$hooks_target/commit-msg"
+    chmod +x "$hooks_target/prepare-commit-msg"
+    
+    print_color "$GREEN" "✓ Installed commit-msg"
+    print_color "$GREEN" "✓ Installed prepare-commit-msg"
+    echo ""
+    print_color "$GREEN" "Git hooks installed successfully!"
+    echo ""
+    print_color "$BLUE" "Hooks installed:"
+    echo "  • commit-msg         - Validates conventional commit format"
+    echo "  • prepare-commit-msg - Prompts for changelog updates on release commits"
+}
+
+# Show help
+show_help() {
+    cat << EOF
+${BLUE}Git Changelog Automation v$VERSION${NC}
+
+Automatically generate changelogs from conventional commits.
+
+${YELLOW}USAGE:${NC}
+  changelog [OPTIONS] [from_tag] [to_tag]
+  changelog --release VERSION [DATE]
+  changelog --install-hooks
+  changelog --help
+
+${YELLOW}EXAMPLES:${NC}
+  changelog                           ${BLUE}# Generate from last tag to HEAD${NC}
+  changelog v1.0.0                    ${BLUE}# Generate from v1.0.0 to HEAD${NC}
+  changelog v1.0.0 v1.1.0             ${BLUE}# Generate from v1.0.0 to v1.1.0${NC}
+  changelog --auto-accept v1.0.0      ${BLUE}# Generate and auto-accept${NC}
+  changelog -y                        ${BLUE}# Generate from last tag, auto-accept${NC}
+  
+  changelog --release 1.2.0           ${BLUE}# Convert unreleased to [1.2.0]${NC}
+  changelog --release v1.2.0 2025-11-01  ${BLUE}# Release with specific date${NC}
+  changelog -r 1.2.0 -y               ${BLUE}# Release and auto-accept${NC}
+  
+  changelog --install-hooks           ${BLUE}# Install git hooks for validation${NC}
+
+${YELLOW}OPTIONS:${NC}
+  --non-interactive, --auto-accept, -y
+                    Auto-accept changes without prompting
+  --release VERSION [DATE], -r VERSION [DATE]
+                    Convert unreleased section to a version release
+                    DATE defaults to today if not specified
+  --install-hooks   Install git hooks for commit validation
+  --version, -v     Show version information
+  --help, -h        Show this help message
+
+${YELLOW}CONVENTIONAL COMMITS:${NC}
+  Supported commit types:
+    feat      - New features (Added section)
+    fix       - Bug fixes (Fixed section)
+    refactor  - Code changes (Changed section)
+    perf      - Performance improvements
+    docs      - Documentation changes
+    style     - Code style changes
+    test      - Test additions/modifications
+    build     - Build system changes
+    ci        - CI/CD changes
+    chore     - Maintenance tasks
+    revert    - Reverted changes
+
+${YELLOW}ENVIRONMENT VARIABLES:${NC}
+  CHANGELOG_FILE       Path to CHANGELOG.md (default: ./CHANGELOG.md)
+  PROJECT_DIR          Project root directory (default: current directory)
+  GIT_CHANGELOG_CONFIG Path to config YAML (optional)
+
+${YELLOW}AUTOMATION:${NC}
+  Use --auto-accept for CI/CD pipelines and automated workflows.
+  The tool will skip interactive prompts and apply changes automatically.
+
+${YELLOW}MORE INFO:${NC}
+  Documentation: https://github.com/adamico/git-changelog-automation
+  Report issues: https://github.com/adamico/git-changelog-automation/issues
+
+EOF
+}
+
+# Main
+main() {
+    local from_ref=""
+    local to_ref=""
+    local auto_accept="false"
+    local release_mode="false"
+    local release_version=""
+    local release_date=""
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --non-interactive|--auto-accept|-y)
+                auto_accept="true"
+                shift
+                ;;
+            --release|-r)
+                release_mode="true"
+                shift
+                if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; then
+                    release_version=$1
+                    shift
+                    # Optional date parameter
+                    if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^- ]]; then
+                        release_date=$1
+                        shift
+                    fi
+                fi
+                ;;
+            --install-hooks)
+                install_hooks
+                exit $?
+                ;;
+            --version|-v)
+                echo "Git Changelog Automation v$VERSION"
+                exit 0
+                ;;
+            --help|-h)
+                show_help
+                exit 0
+                ;;
+            *)
+                if [ -z "$from_ref" ]; then
+                    from_ref=$1
+                elif [ -z "$to_ref" ]; then
+                    to_ref=$1
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    print_color "$BLUE" "=== Git Changelog Automation v$VERSION ==="
+    echo ""
+    
+    # Validate CHANGELOG is in sync with git tags (skip in release mode)
+    if [ "$release_mode" != "true" ]; then
+        validate_changelog_sync
+        echo ""
+    fi
+    
+    # Handle release mode
+    if [ "$release_mode" = "true" ]; then
+        if [ -z "$release_version" ]; then
+            print_color "$RED" "Error: --release requires a version number"
+            echo ""
+            echo "Usage: changelog --release VERSION [DATE]"
+            echo "Example: changelog --release 1.2.0"
+            echo "Example: changelog --release v1.2.0 2025-11-01"
+            return 1
+        fi
+        
+        if release_version "$release_version" "$release_date"; then
+            if [ "$auto_accept" = "true" ]; then
+                print_color "$GREEN" "Release completed (auto-accepted)"
+                rm -f "$CHANGELOG_BACKUP"
+            else
+                interactive_update "$auto_accept"
+            fi
+        else
+            return 1
+        fi
+        return 0
+    fi
+    
+    # Check dependencies (optional)
+    check_dependencies || true
+    
+    # Generate changelog
+    local generated_file
+    if generated_file=$(generate_changelog "$from_ref" "$to_ref"); then
+        update_changelog "$generated_file"
+        rm "$generated_file"
+        
+        # Interactive review
+        if [ -f "$CHANGELOG_BACKUP" ]; then
+            interactive_update "$auto_accept"
+        else
+            print_color "$GREEN" "Changelog created successfully!"
+        fi
+    else
+        print_color "$YELLOW" "No changes to add to changelog."
+        return 1
+    fi
+}
+
+# Run main if not sourced
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+fi
