@@ -367,7 +367,7 @@ get_existing_commits() {
         return 0
     fi
     # Extract all lines that look like commit messages (start with "- " and have conventional prefix)
-    grep -E "^- (feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert):" "$CHANGELOG_FILE" 2>/dev/null || true
+    grep -E -- "^- (feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert):" "$CHANGELOG_FILE" 2>/dev/null || true
 }
 
 # Generate changelog
@@ -432,7 +432,7 @@ generate_changelog() {
         echo "$commits" | while IFS= read -r commit; do
             [ -z "$commit" ] && continue
             # Check if this exact commit message is already in CHANGELOG
-            echo "$existing_commits" | grep -Fxq "- $commit" || echo "$commit"
+            echo "$existing_commits" | grep -Fxq -- "- $commit" || echo "$commit"
         done
     }
     
