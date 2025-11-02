@@ -1,8 +1,23 @@
 # Changelog
 
+## [1.4.0] - 2025-11-02
+
+### Added
+- feat: add --backup/--no-backup flags for --clean command
+- feat: add --install and --uninstall commands
+
+### Documentation
+- docs: clear todos - all complete
+- docs: update README with v1.3.x features
+- docs: clear completed todos
+- docs: update help text for --clean backup flags
+- docs: update todos - install/uninstall done, focus on --clean tests
+- docs: clear completed todos
+
+### Tests
+- test: add edge case deduplication test
+
 ## [1.3.3] - 2025-11-02
-
-
 
 ### Fixed
 - fix: add missing grep -- separators in get_existing_commits and deduplicate_commits
@@ -14,17 +29,17 @@
 ### Tests
 - test: add test for commits with special characters that could break grep
 
+### Chores
+- chore: release v1.3.3
 
 ## [1.3.2] - 2025-11-02
-
-
 
 ### Documentation
 - docs: rebuild CHANGELOG to include v1.3.0 section
 
 ### Chores
+- chore: release v1.3.2
 - chore: add docs/todo.md for tracking tasks
-
 
 ## [1.3.1] - 2025-11-02
 

@@ -1,6 +1,6 @@
 # Git Changelog Automation
 
-[![Version](https://img.shields.io/badge/version-1.3.3-blue.svg)](https://github.com/adamico/git-changelog-automation)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/adamico/git-changelog-automation)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Shell](https://img.shields.io/badge/shell-bash-orange.svg)](https://www.gnu.org/software/bash/)
 

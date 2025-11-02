@@ -614,6 +614,7 @@ test_rebuild_commit_isolation() {
     test_clean_with_backup
     test_clean_without_backup
     test_clean_no_duplicates
+    test_rebuild_uses_tag_dates
     print_color "$YELLOW" "Test: Rebuild correctly isolates commits per version"
     
     local test_dir=$(mktemp -d)
@@ -1004,6 +1005,66 @@ EOF
     local backup_count=$(ls CHANGELOG.md.backup_* 2>/dev/null | wc -l)
     assert_equals "0" "$backup_count" "No backup when no duplicates found"
     
+
+test_rebuild_uses_tag_dates() {
+    print_color "$YELLOW" "Test: --rebuild uses git tag commit dates, not current date"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Initialize git repo
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git config tag.gpgsign false
+    git config commit.gpgsign false
+    
+    # Create v1.0.0 with specific date (2025-01-15)
+    GIT_COMMITTER_DATE="2025-01-15 10:00:00" git commit --allow-empty --date="2025-01-15 10:00:00" -q -m "feat: v1 feature"
+    git tag v1.0.0
+    
+    # Create v1.1.0 with different date (2025-02-20)
+    GIT_COMMITTER_DATE="2025-02-20 15:30:00" git commit --allow-empty --date="2025-02-20 15:30:00" -q -m "feat: v1.1 feature"
+    git tag v1.1.0
+    
+    # Rebuild changelog
+    "$GENERATE_SCRIPT" --rebuild >/dev/null 2>&1
+    
+    if [ -f CHANGELOG.md ]; then
+        local content=$(cat CHANGELOG.md)
+        
+        # Check v1.0.0 has correct date (2025-01-15)
+        if echo "$content" | grep -q "## \[1.0.0\] - 2025-01-15"; then
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            print_color "$GREEN" "  ✓ v1.0.0 has correct date (2025-01-15)"
+        else
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            print_color "$RED" "  ✗ v1.0.0 should have date 2025-01-15"
+            echo "$content" | grep "1.0.0" | head -1
+        fi
+        TESTS_RUN=$((TESTS_RUN + 1))
+        
+        # Check v1.1.0 has correct date (2025-02-20)
+        if echo "$content" | grep -q "## \[1.1.0\] - 2025-02-20"; then
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            print_color "$GREEN" "  ✓ v1.1.0 has correct date (2025-02-20)"
+        else
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            print_color "$RED" "  ✗ v1.1.0 should have date 2025-02-20"
+            echo "$content" | grep "1.1.0" | head -1
+        fi
+        TESTS_RUN=$((TESTS_RUN + 1))
+    else
+        print_color "$RED" "  ✗ CHANGELOG.md not created"
+        TESTS_FAILED=$((TESTS_FAILED + 2))
+        TESTS_RUN=$((TESTS_RUN + 2))
+    fi
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
     # Cleanup
     cd "$orig_dir" 2>/dev/null || cd /tmp
     rm -rf "$test_dir"
