@@ -1,15 +1,13 @@
 # TODO
 
-## chore
+## 1:test
 
-## docs
+## 2:fix
 
-## feat
+## 3:feat
 
+## 4:refactor
 
-## fix
-- [] fix the grep errors seen in changelog generation when no matches found
+## 5:chore
 
-## refactor
-
-## test
+## 6:docs
