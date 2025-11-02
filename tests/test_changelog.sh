@@ -608,6 +608,7 @@ test_rebuild_from_tags() {
 test_rebuild_commit_isolation() {
     test_default_fills_missing_tags
     test_default_adds_unreleased_section
+    test_unreleased_deduplication
     print_color "$YELLOW" "Test: Rebuild correctly isolates commits per version"
     
     local test_dir=$(mktemp -d)
@@ -763,6 +764,7 @@ CHANGELOG
 }
 
 test_default_adds_unreleased_section() {
+    test_unreleased_deduplication
     print_color "$YELLOW" "Test: Default execution adds Unreleased section for commits after last tag"
     
     local test_dir=$(mktemp -d)
@@ -841,6 +843,102 @@ CHANGELOG
 }
 
 main() {
+
+test_unreleased_deduplication() {
+    print_color "$YELLOW" "Test: Unreleased section only includes NEW commits, not already-versioned ones"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Initialize git repo
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git config tag.gpgsign false
+    git config commit.gpgsign false
+    
+    # Create v1.0.0 with 2 commits
+    echo "v1-feat" > file1.txt
+    git add file1.txt
+    git commit -q -m "feat: version 1 feature"
+    echo "v1-fix" > file2.txt
+    git add file2.txt
+    git commit -q -m "fix: version 1 bugfix"
+    git tag v1.0.0
+    
+    # Create CHANGELOG with v1.0.0 commits already documented
+    cat > CHANGELOG.md << 'CHANGELOG'
+# Changelog
+
+## [1.0.0] - 2025-01-01
+
+### Added
+- feat: version 1 feature
+
+### Fixed
+- fix: version 1 bugfix
+
+---
+CHANGELOG
+    
+    # Add NEW commits after the tag
+    echo "new-feat" > file3.txt
+    git add file3.txt
+    git commit -q -m "feat: new feature after tag"
+    echo "new-fix" > file4.txt
+    git add file4.txt
+    git commit -q -m "fix: new bugfix after tag"
+    
+    # Run default execution
+    CHANGELOG_FILE="$test_dir/CHANGELOG.md" "$GENERATE_SCRIPT" -y >/dev/null 2>&1 || true
+    
+    if [ -f "$test_dir/CHANGELOG.md" ]; then
+        local content=$(cat "$test_dir/CHANGELOG.md")
+        
+        # Should have Unreleased section
+        assert_contains "$content" "[Unreleased]" "Has Unreleased section"
+        
+        # Unreleased should ONLY have NEW commits
+        assert_contains "$content" "feat: new feature after tag" "Unreleased has new feature"
+        assert_contains "$content" "fix: new bugfix after tag" "Unreleased has new fix"
+        
+        # Extract Unreleased section only
+        local unreleased_section=$(sed -n '/^## \[Unreleased\]/,/^## \[1\.0\.0\]/p' "$test_dir/CHANGELOG.md" | grep "^- " || true)
+        local unreleased_count=$(echo "$unreleased_section" | grep -c "^- " || echo 0)
+        
+        # Should have exactly 2 commits in Unreleased (not 4)
+        assert_equals "2" "$unreleased_count" "Unreleased has exactly 2 NEW commits (not old ones)"
+        
+        # Unreleased should NOT contain old commits that are already in v1.0.0
+        local unreleased_text=$(sed -n '/^## \[Unreleased\]/,/^## \[1\.0\.0\]/p' "$test_dir/CHANGELOG.md")
+        if echo "$unreleased_text" | grep -q "version 1 feature"; then
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            print_color "$RED" "  ✗ Unreleased should NOT have 'version 1 feature' (already in v1.0.0)"
+        else
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            print_color "$GREEN" "  ✓ Unreleased does NOT have old 'version 1 feature' commit"
+        fi
+        TESTS_RUN=$((TESTS_RUN + 1))
+        
+        if echo "$unreleased_text" | grep -q "version 1 bugfix"; then
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            print_color "$RED" "  ✗ Unreleased should NOT have 'version 1 bugfix' (already in v1.0.0)"
+        else
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            print_color "$GREEN" "  ✓ Unreleased does NOT have old 'version 1 bugfix' commit"
+        fi
+        TESTS_RUN=$((TESTS_RUN + 1))
+        
+    else
+        print_color "$RED" "  ✗ CHANGELOG.md was not modified"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
     print_color "$YELLOW" "=== Changelog Generation Script Tests ==="
     echo ""
     
@@ -868,6 +966,7 @@ main() {
     test_rebuild_commit_isolation
     test_default_fills_missing_tags
     test_default_adds_unreleased_section
+    test_unreleased_deduplication
     # TODO: Re-enable these tests after implementing/fixing release and sync features
     # test_release_functionality
     # test_sync_validation
