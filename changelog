@@ -232,7 +232,7 @@ extract_commits_by_type() {
     local git_range=$1
     local commit_type=$2
     
-    git log --pretty=format:"%s" "$git_range" 2>/dev/null | grep -E "^${commit_type}:" || true
+    git log --pretty=format:"%s" "$git_range" 2>/dev/null | grep -E -- "^${commit_type}:" || true
 }
 
 # Add a changelog section with commits
@@ -407,17 +407,17 @@ generate_changelog() {
     fi
     
     # Extract commits by type
-    local feat_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^feat:" || true)
-    local fix_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^fix:" || true)
-    local docs_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^docs:" || true)
-    local refactor_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^refactor:" || true)
-    local perf_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^perf:" || true)
-    local test_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^test:" || true)
-    local build_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^build:" || true)
-    local ci_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^ci:" || true)
-    local style_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^style:" || true)
-    local chore_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^chore:" || true)
-    local revert_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^revert:" || true)
+    local feat_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^feat:" || true)
+    local fix_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^fix:" || true)
+    local docs_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^docs:" || true)
+    local refactor_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^refactor:" || true)
+    local perf_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^perf:" || true)
+    local test_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^test:" || true)
+    local build_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^build:" || true)
+    local ci_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^ci:" || true)
+    local style_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^style:" || true)
+    local chore_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^chore:" || true)
+    local revert_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^revert:" || true)
     
     
     # Get existing commits from CHANGELOG for deduplication
