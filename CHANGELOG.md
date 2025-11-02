@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.4.1] - 2025-11-02
+
+### Tests
+- test: add test for --rebuild using correct tag dates
+
 ## [1.4.0] - 2025-11-02
 
 ### Added
