@@ -2,25 +2,29 @@
 
 ## [1.3.1] - 2025-11-02
 
+### Fixed
+- fix: prevent already-versioned commits from appearing in Unreleased section
 
+### Tests
+- test: add test for unreleased section deduplication
+
+### Chores
+- chore: release v1.3.1
+
+## [1.3.0] - 2025-11-02
 
 ### Added
 - feat: populate missing tagged versions with real commits from git history
-
-### Fixed
-- fix: prevent already-versioned commits from appearing in Unreleased section
 
 ### Documentation
 - docs: improve terminal command patterns with Cwd checking
 - docs: add terminal command patterns for auto-approval in Copilot
 
 ### Tests
-- test: add test for unreleased section deduplication
 - test: add tests for missing tag filling and unreleased commits
 
 ### Chores
 - chore: release v1.3.0
-
 
 ## [1.2.1] - 2025-11-01
 
