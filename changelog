@@ -1036,6 +1036,12 @@ check_git_clean() {
     fi
     return 0
 }
+
+# Stage only release-related files for commit
+# Stages: CHANGELOG.md, VERSION, README.md
+stage_release_files() {
+    git add CHANGELOG.md VERSION README.md 2>/dev/null || true
+}
 create_release_tag() {
     local version=$1
     git tag -a "v${version}" -m "Release version ${version}"
@@ -1043,7 +1049,7 @@ create_release_tag() {
 
 create_release_commit() {
     local version=$1
-    git add CHANGELOG.md VERSION README.md 2>/dev/null
+    stage_release_files
     git commit -m "chore: release v${version}"
 }
 
