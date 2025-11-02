@@ -568,20 +568,33 @@ update_changelog() {
     # Extract sections from generated file
     local sections=("Added" "Fixed" "Changed" "Performance" "Documentation" "Style" "Tests" "Build" "CI/CD" "Chores" "Reverted")
     
-    # Function to extract commits for a section
-    extract_section() {
+    # Function to extract commits for a section from generated file
+    extract_section_from_generated() {
         local section=$1
         local file=$2
         sed -n "/^### $section/,/^### \|^## \|^$/p" "$file" | grep "^- " || true
     }
     
-    # Merge sections from existing and new
+    # Function to extract commits ONLY from Unreleased section of existing CHANGELOG
+    extract_unreleased_section() {
+        local section=$1
+        if [ ! -f "$CHANGELOG_FILE" ]; then
+            return 0
+        fi
+        # Extract only from Unreleased section (between ## [Unreleased] and next ## [version])
+        sed -n '/^## \[Unreleased\]/,/^## \[[0-9]/p' "$CHANGELOG_FILE" | \
+            sed -n "/^### $section/,/^### \|^## \|^$/p" | \
+            grep "^- " || true
+    }
+    
+    # Merge sections: existing unreleased + new
     declare -A merged_sections
     for section in "${sections[@]}"; do
-        local existing=$(extract_section "$section" "$CHANGELOG_FILE" 2>/dev/null || true)
-        local new=$(extract_section "$section" "$generated_file" 2>/dev/null || true)
+        local existing=$(extract_unreleased_section "$section" 2>/dev/null || true)
+        local new=$(extract_section_from_generated "$section" "$generated_file" 2>/dev/null || true)
         
         if [ -n "$existing" ] && [ -n "$new" ]; then
+            # Merge and deduplicate
             merged_sections["$section"]=$(echo -e "$existing\n$new" | sort -u)
         elif [ -n "$existing" ]; then
             merged_sections["$section"]="$existing"
@@ -627,7 +640,6 @@ update_changelog() {
     mv "$CHANGELOG_FILE.new" "$CHANGELOG_FILE"
     print_color "$GREEN" "Updated $CHANGELOG_FILE" >&2
 }
-
 # Interactive mode
 interactive_update() {
     local auto_accept=$1
