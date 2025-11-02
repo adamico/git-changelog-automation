@@ -863,6 +863,8 @@ show_help() {
     print_color "$YELLOW" "USAGE:"
     echo "  changelog [OPTIONS] [from_tag] [to_tag]"
     echo "  changelog --release VERSION [DATE]"
+    echo "  changelog --install"
+    echo "  changelog --uninstall"
     echo "  changelog --install-hooks"
     echo "  changelog --clean"
     echo "  changelog --rebuild"
@@ -879,6 +881,8 @@ show_help() {
     print_color "$GREEN" "  changelog --release v1.2.0 2025-11-01 ${NC}# Release with specific date"
     print_color "$GREEN" "  changelog -r 1.2.0 -y               ${NC}  # Release and auto-accept"
     echo ""
+    print_color "$GREEN" "  changelog --install                 ${NC}  # Install script to ~/.local/bin"
+    print_color "$GREEN" "  changelog --uninstall               ${NC}  # Remove script from ~/.local/bin"
     print_color "$GREEN" "  changelog --install-hooks           ${NC}  # Install git hooks for validation"
     print_color "$GREEN" "  changelog --clean                   ${NC}  # Remove duplicate entries from CHANGELOG"
     print_color "$GREEN" "  changelog --rebuild                 ${NC}  # Rebuild entire CHANGELOG from git tags"
@@ -894,6 +898,8 @@ show_help() {
     echo "  --release VERSION [DATE], -r VERSION [DATE]"
     echo "                    Convert unreleased section to a version release"
     echo "                    DATE defaults to today if not specified"
+    echo "  --install         Install script to ~/.local/bin"
+    echo "  --uninstall       Remove script from ~/.local/bin"
     echo "  --install-hooks   Install git hooks for commit validation"
     echo "  --version, -v     Show version information"
     echo "  --help, -h        Show this help message"
@@ -928,6 +934,82 @@ show_help() {
 }
 
 # Main
+# Install changelog script to ~/.local/bin
+install_script() {
+    local script_path="$(readlink -f "$0")"
+    local install_dir="$HOME/.local/bin"
+    local install_path="$install_dir/changelog"
+    
+    # Create directory if it doesnt exist
+    if [ ! -d "$install_dir" ]; then
+        mkdir -p "$install_dir" || {
+            print_color "$RED" "Error: Failed to create directory $install_dir"
+            return 1
+        }
+        print_color "$GREEN" "Created directory: $install_dir"
+    fi
+    
+    # Check if already installed
+    if [ -f "$install_path" ]; then
+        print_color "$YELLOW" "Warning: changelog already exists at $install_path"
+        read -p "Overwrite? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_color "$YELLOW" "Installation cancelled"
+            return 1
+        fi
+    fi
+    
+    # Copy script
+    cp "$script_path" "$install_path" || {
+        print_color "$RED" "Error: Failed to copy script"
+        return 1
+    }
+    
+    # Make executable
+    chmod +x "$install_path" || {
+        print_color "$RED" "Error: Failed to make script executable"
+        return 1
+    }
+    
+    print_color "$GREEN" "✓ Installed changelog to $install_path"
+    
+    # Check if in PATH
+    if [[ ":$PATH:" != *":$install_dir:"* ]]; then
+        print_color "$YELLOW" "Note: $install_dir is not in your PATH"
+        print_color "$YELLOW" "Add this line to your ~/.bashrc or ~/.zshrc:"
+        print_color "$CYAN" "  export PATH="$HOME/.local/bin:$PATH""
+    fi
+    
+    return 0
+}
+
+# Uninstall changelog script from ~/.local/bin
+uninstall_script() {
+    local install_path="$HOME/.local/bin/changelog"
+    
+    if [ ! -f "$install_path" ]; then
+        print_color "$YELLOW" "changelog is not installed at $install_path"
+        return 1
+    fi
+    
+    print_color "$YELLOW" "This will remove: $install_path"
+    read -p "Continue? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_color "$YELLOW" "Uninstallation cancelled"
+        return 1
+    fi
+    
+    rm "$install_path" || {
+        print_color "$RED" "Error: Failed to remove script"
+        return 1
+    }
+    
+    print_color "$GREEN" "✓ Removed changelog from $install_path"
+    return 0
+}
+
 main() {
     local from_ref=""
     local to_ref=""
@@ -958,6 +1040,14 @@ main() {
                 ;;
             --install-hooks)
                 install_hooks
+                exit $?
+                ;;
+            --install)
+                install_script
+                exit $?
+                ;;
+            --uninstall)
+                uninstall_script
                 exit $?
                 ;;
             --clean)
