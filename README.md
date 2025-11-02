@@ -16,26 +16,37 @@ Automatically generate changelogs from conventional commits. Parse git history t
 - 🎨 **Colorized Output**: Clear, readable terminal output
 - 📦 **Zero Dependencies**: Pure bash, optional npm integration
 - 🔖 **Version Release**: Convert unreleased changes to tagged versions
+- 🧹 **Smart Deduplication**: Prevents duplicate commits in changelog sections
+- 💾 **Backup Control**: Optional timestamped backups when cleaning duplicates
+- 📥 **Easy Install**: `--install` command copies script to `~/.local/bin`
 
 ## 🚀 Quick Start
 
 ### Installation
 
-**Option 1: Direct download**
+**Option 1: Auto-install (Recommended)**
+```bash
+# Clone and install to ~/.local/bin
+git clone https://github.com/adamico/git-changelog-automation.git
+cd git-changelog-automation
+./changelog --install
+```
+
+**Option 2: Direct download**
 ```bash
 curl -o changelog https://raw.githubusercontent.com/adamico/git-changelog-automation/main/changelog
 chmod +x changelog
 sudo mv changelog /usr/local/bin/
 ```
 
-**Option 2: Clone repository**
+**Option 3: Clone and symlink**
 ```bash
 git clone https://github.com/adamico/git-changelog-automation.git
 cd git-changelog-automation
 sudo ln -s "$(pwd)/changelog" /usr/local/bin/changelog
 ```
 
-**Option 3: Use in project**
+**Option 4: Use in project**
 ```bash
 # Add as git submodule
 git submodule add https://github.com/adamico/git-changelog-automation.git tools/changelog
@@ -107,6 +118,10 @@ git commit -m "perf: optimize database queries"
 ```
 changelog [OPTIONS] [from_tag] [to_tag]
 changelog --release VERSION [DATE]
+changelog --install
+changelog --uninstall
+changelog --clean [--no-backup]
+changelog --rebuild
 changelog --install-hooks
 
 OPTIONS:
@@ -114,7 +129,12 @@ OPTIONS:
                     Auto-accept changes without prompting
   --release VERSION [DATE], -r VERSION [DATE]
                     Convert unreleased section to version release
-  --install-hooks   Install git hooks
+  --install         Install script to ~/.local/bin
+  --uninstall       Remove script from ~/.local/bin
+  --clean           Remove duplicate entries (creates timestamped backup)
+  --no-backup       Skip backup when using --clean
+  --rebuild         Rebuild entire changelog from git tag history
+  --install-hooks   Install git hooks for commit validation
   --version, -v     Show version
   --help, -h        Show help
 ```
@@ -131,6 +151,34 @@ export PROJECT_DIR=/path/to/project
 # Config file (optional, for git-conventional-commits npm package)
 export GIT_CHANGELOG_CONFIG=/path/to/config.yaml
 ```
+
+### Cleaning Duplicates
+
+Remove duplicate entries from your changelog with optional backup:
+
+```bash
+# Clean with timestamped backup (default)
+changelog --clean
+
+# Clean without backup
+changelog --clean --no-backup
+```
+
+Backups are saved as `CHANGELOG.md.backup_YYYYMMDD_HHMMSS`.
+
+### Rebuilding Changelog
+
+Rebuild entire changelog from git tag history:
+
+```bash
+changelog --rebuild
+```
+
+This command:
+- Scans all git tags
+- Extracts commits between tags
+- Generates proper changelog sections
+- Preserves existing Unreleased section
 
 ### Git Hooks
 
