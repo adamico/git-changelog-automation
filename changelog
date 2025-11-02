@@ -181,6 +181,8 @@ get_latest_tag() {
 
 # Clean duplicate entries from CHANGELOG
 clean_duplicates() {
+    local create_backup="${1:-true}"  # Default to true for backward compatibility
+    
     if [ ! -f "$CHANGELOG_FILE" ]; then
         print_color "$YELLOW" "No CHANGELOG.md found"
         return 1
@@ -209,9 +211,17 @@ clean_duplicates() {
     
     if [ "$duplicates_found" -gt 0 ]; then
         print_color "$GREEN" "✓ Removed $duplicates_found duplicate entries"
-        cp "$CHANGELOG_FILE" "${CHANGELOG_FILE}.backup"
+        
+        # Create timestamped backup if requested
+        if [ "$create_backup" = "true" ]; then
+            local timestamp=$(date +%Y%m%d_%H%M%S)
+            local backup_file="${CHANGELOG_FILE}.backup_${timestamp}"
+            cp "$CHANGELOG_FILE" "$backup_file"
+            print_color "$GREEN" "✓ Backup saved: $backup_file"
+        fi
+        
         mv "$temp_clean" "$CHANGELOG_FILE"
-        print_color "$GREEN" "✓ CHANGELOG cleaned (backup saved)"
+        print_color "$GREEN" "✓ CHANGELOG cleaned"
         return 0
     else
         print_color "$GREEN" "✓ No duplicates found"
@@ -1017,12 +1027,22 @@ main() {
     local release_mode="false"
     local release_version=""
     local release_date=""
+    local backup_on_clean="true"
+    local clean_mode="false"
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
             --non-interactive|--auto-accept|-y)
                 auto_accept="true"
+                shift
+                ;;
+            --backup)
+                backup_on_clean="true"
+                shift
+                ;;
+            --no-backup)
+                backup_on_clean="false"
                 shift
                 ;;
             --release|-r)
@@ -1051,8 +1071,8 @@ main() {
                 exit $?
                 ;;
             --clean)
-                clean_duplicates
-                exit $?
+                clean_mode="true"
+                shift
                 ;;
             --rebuild)
                 rebuild_changelog
@@ -1076,6 +1096,12 @@ main() {
                 ;;
         esac
     done
+    
+    # Handle clean mode
+    if [ "$clean_mode" = "true" ]; then
+        clean_duplicates "$backup_on_clean"
+        exit $?
+    fi
     
     print_color "$BLUE" "=== Git Changelog Automation v$VERSION ==="
     echo ""

@@ -611,6 +611,9 @@ test_rebuild_commit_isolation() {
     test_unreleased_deduplication
     test_commits_with_special_characters
     test_deduplication_edge_cases
+    test_clean_with_backup
+    test_clean_without_backup
+    test_clean_no_duplicates
     print_color "$YELLOW" "Test: Rebuild correctly isolates commits per version"
     
     local test_dir=$(mktemp -d)
@@ -904,6 +907,107 @@ CHANGELOG
     # Cleanup
     cd "$orig_dir" 2>/dev/null || cd /tmp
     rm -rf "$test_dir"
+
+test_clean_with_backup() {
+    print_color "$YELLOW" "Test: --clean creates timestamped backup by default"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Create CHANGELOG with duplicates
+    cat > CHANGELOG.md << 'EOF'
+# Changelog
+## [1.0.0] - 2025-01-01
+### Added
+- feat: duplicate feature
+- feat: duplicate feature
+- feat: unique feature
+EOF
+    
+    # Run clean (should create backup by default)
+    "$GENERATE_SCRIPT" --clean >/dev/null 2>&1
+    
+    # Check backup was created with timestamp
+    local backup_count=$(ls CHANGELOG.md.backup_* 2>/dev/null | wc -l)
+    assert_equals "1" "$backup_count" "Backup file created"
+    
+    # Check backup has original content
+    if [ -f CHANGELOG.md.backup_* ]; then
+        local backup_lines=$(cat CHANGELOG.md.backup_* | wc -l)
+        assert_equals "6" "$backup_lines" "Backup has original 6 lines"
+    fi
+    
+    # Check cleaned file has duplicates removed
+    local cleaned_lines=$(cat CHANGELOG.md | wc -l)
+    assert_equals "5" "$cleaned_lines" "Cleaned file has 5 lines (1 dup removed)"
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
+
+test_clean_without_backup() {
+    print_color "$YELLOW" "Test: --clean --no-backup skips backup creation"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Create CHANGELOG with duplicates
+    cat > CHANGELOG.md << 'EOF'
+# Changelog
+## [1.0.0] - 2025-01-01
+### Added
+- feat: dup1
+- feat: dup1
+- feat: dup2
+- feat: dup2
+EOF
+    
+    # Run clean without backup
+    "$GENERATE_SCRIPT" --clean --no-backup >/dev/null 2>&1
+    
+    # Check NO backup was created
+    local backup_count=$(ls CHANGELOG.md.backup_* 2>/dev/null | wc -l)
+    assert_equals "0" "$backup_count" "No backup file created with --no-backup"
+    
+    # Check cleaned file has duplicates removed
+    local cleaned_lines=$(cat CHANGELOG.md | wc -l)
+    assert_equals "5" "$cleaned_lines" "Cleaned file has 5 lines (2 dups removed)"
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
+
+test_clean_no_duplicates() {
+    print_color "$YELLOW" "Test: --clean with no duplicates does not create backup"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Create CHANGELOG without duplicates
+    cat > CHANGELOG.md << 'EOF'
+# Changelog
+## [1.0.0] - 2025-01-01
+### Added
+- feat: unique1
+- feat: unique2
+EOF
+    
+    # Run clean
+    "$GENERATE_SCRIPT" --clean >/dev/null 2>&1
+    
+    # Check NO backup was created (no duplicates found)
+    local backup_count=$(ls CHANGELOG.md.backup_* 2>/dev/null | wc -l)
+    assert_equals "0" "$backup_count" "No backup when no duplicates found"
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
 }
 
 test_deduplication_edge_cases() {
