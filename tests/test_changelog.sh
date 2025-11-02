@@ -66,7 +66,7 @@ assert_contains() {
     
     TESTS_RUN=$((TESTS_RUN + 1))
     
-    if echo "$haystack" | grep -qF "$needle"; then
+    if echo "$haystack" | grep -qF -- "$needle"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
         print_color "$GREEN" "  ✓ $message"
         return 0
@@ -85,7 +85,7 @@ assert_not_contains() {
     
     TESTS_RUN=$((TESTS_RUN + 1))
     
-    if ! echo "$haystack" | grep -qF "$needle"; then
+    if ! echo "$haystack" | grep -qF -- "$needle"; then
         TESTS_PASSED=$((TESTS_PASSED + 1))
         print_color "$GREEN" "  ✓ $message"
         return 0
@@ -609,6 +609,7 @@ test_rebuild_commit_isolation() {
     test_default_fills_missing_tags
     test_default_adds_unreleased_section
     test_unreleased_deduplication
+    test_commits_with_special_characters
     print_color "$YELLOW" "Test: Rebuild correctly isolates commits per version"
     
     local test_dir=$(mktemp -d)
@@ -765,6 +766,7 @@ CHANGELOG
 
 test_default_adds_unreleased_section() {
     test_unreleased_deduplication
+    test_commits_with_special_characters
     print_color "$YELLOW" "Test: Default execution adds Unreleased section for commits after last tag"
     
     local test_dir=$(mktemp -d)
@@ -842,6 +844,66 @@ CHANGELOG
     rm -rf "$test_dir"
 }
 
+test_commits_with_special_characters() {
+    print_color "$YELLOW" "Test: Handle commits that start with dashes or other special characters"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Initialize git repo
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git config tag.gpgsign false
+    git config commit.gpgsign false
+    
+    # Create commits with special characters that could break grep
+    echo "v1" > file1.txt
+    git add file1.txt
+    git commit -q -m "feat: - starts with dash"
+    echo "v2" > file2.txt
+    git add file2.txt
+    git commit -q -m "fix: --verbose flag issue"
+    git tag v1.0.0
+    
+    # Create CHANGELOG
+    cat > CHANGELOG.md << 'CHANGELOG'
+# Changelog
+
+---
+CHANGELOG
+    
+    # Run default execution - should not produce grep errors
+    local output=$(CHANGELOG_FILE="$test_dir/CHANGELOG.md" "$GENERATE_SCRIPT" -y 2>&1)
+    
+    # Check for grep errors in output
+    if echo "$output" | grep -q "grep: invalid option"; then
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        print_color "$RED" "  ✗ Grep errors found in output"
+        echo "$output" | grep "grep:" | head -3 >&2
+    else
+        TESTS_PASSED=$((TESTS_PASSED + 1))
+        print_color "$GREEN" "  ✓ No grep errors in output"
+    fi
+    TESTS_RUN=$((TESTS_RUN + 1))
+    
+    if [ -f "$test_dir/CHANGELOG.md" ]; then
+        local content=$(cat "$test_dir/CHANGELOG.md")
+        
+        # Should still create the CHANGELOG despite special characters
+        assert_contains "$content" "[1.0.0]" "Has v1.0.0 section"
+        assert_contains "$content" "starts with dash" "Has commit with leading dash"
+        assert_contains "$content" "--verbose flag issue" "Has commit with double dash"
+    else
+        print_color "$RED" "  ✗ CHANGELOG.md was not created"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
 main() {
 
 test_unreleased_deduplication() {
@@ -967,6 +1029,7 @@ CHANGELOG
     test_default_fills_missing_tags
     test_default_adds_unreleased_section
     test_unreleased_deduplication
+    test_commits_with_special_characters
     # TODO: Re-enable these tests after implementing/fixing release and sync features
     # test_release_functionality
     # test_sync_validation
@@ -987,3 +1050,4 @@ CHANGELOG
 }
 
 main "$@"
+
