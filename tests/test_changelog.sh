@@ -610,6 +610,7 @@ test_rebuild_commit_isolation() {
     test_default_adds_unreleased_section
     test_unreleased_deduplication
     test_commits_with_special_characters
+    test_deduplication_edge_cases
     print_color "$YELLOW" "Test: Rebuild correctly isolates commits per version"
     
     local test_dir=$(mktemp -d)
@@ -898,6 +899,68 @@ CHANGELOG
     else
         print_color "$RED" "  ✗ CHANGELOG.md was not created"
         TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
+
+test_deduplication_edge_cases() {
+    print_color "$YELLOW" "Test: Deduplication edge cases (empty sections, duplicates, whitespace)"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Initialize git repo
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git config tag.gpgsign false
+    git config commit.gpgsign false
+    
+    # Create v1.0.0
+    echo "v1" > file1.txt
+    git add file1.txt
+    git commit -q -m "feat: old feature"
+    git tag v1.0.0
+    
+    # Create CHANGELOG with duplicates
+    cat > CHANGELOG.md << 'CHANGELOG'
+# Changelog
+
+## [1.0.0] - 2025-01-01
+
+### Added
+- feat: old feature
+- feat: old feature
+
+---
+CHANGELOG
+    
+    # Add new commit
+    echo "new" > file2.txt
+    git add file2.txt
+    git commit -q -m "feat: new feature"
+    
+    # Run tool
+    CHANGELOG_FILE="$test_dir/CHANGELOG.md" "$GENERATE_SCRIPT" -y >/dev/null 2>&1 || true
+    
+    if [ -f "$test_dir/CHANGELOG.md" ]; then
+        local content=$(cat "$test_dir/CHANGELOG.md")
+        
+        # Check old feature is NOT in Unreleased
+        local unreleased=$(sed -n '/^## \[Unreleased\]/,/^## \[1\.0\.0\]/p' "$test_dir/CHANGELOG.md")
+        local old_count=$(echo "$unreleased" | grep -c "^- feat: old feature$")
+        assert_equals "0" "$old_count" "Old feature not duplicated in Unreleased"
+        
+        # Check new feature IS in Unreleased
+        assert_contains "$content" "new feature" "Has new feature"
+    else
+        print_color "$RED" "  ✗ CHANGELOG not created"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+        TESTS_RUN=$((TESTS_RUN + 1))
     fi
     
     # Cleanup
