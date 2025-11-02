@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.2] - 2025-11-02
+
+
+
+### Documentation
+- docs: rebuild CHANGELOG to include v1.3.0 section
+
+### Chores
+- chore: add docs/todo.md for tracking tasks
+
+
 ## [1.3.1] - 2025-11-02
 
 ### Fixed
