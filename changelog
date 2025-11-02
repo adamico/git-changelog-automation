@@ -109,38 +109,72 @@ add_missing_versions() {
     # Backup current changelog
     cp "$CHANGELOG_FILE" "$CHANGELOG_BACKUP"
     
-    # Sort missing versions in descending order
+    # Sort missing versions in descending order (newest first)
     local sorted_missing=$(echo "$missing_versions" | grep -v '^$' | sort -V -r)
     
-    # Create entries for each missing version
+    # Get all tags sorted by version
+    local all_tags=$(git tag -l --sort=-version:refname | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$')
+    
+    # Create entries for each missing version with real commits
     local entries_file=$(mktemp)
     echo "$sorted_missing" | while read -r version; do
-        local tag_date=$(git log -1 --format=%ad --date=short "v${version}" 2>/dev/null || git log -1 --format=%ad --date=short "${version}" 2>/dev/null)
+        [ -z "$version" ] && continue
+        
+        local tag="v${version}"
+        # Try with v prefix first, then without
+        git rev-parse "$tag" >/dev/null 2>&1 || tag="${version}"
+        
+        local tag_date=$(get_tag_date "$tag")
         [ -z "$tag_date" ] && tag_date=$(date +%Y-%m-%d)
         
-        print_color "$GREEN" "Adding version $version to CHANGELOG..." >&2
+        print_color "$GREEN" "Adding version $version with real commits..." >&2
         
-        echo "## [$version] - $tag_date"
-        echo ""
-        echo "### Added"
-        echo "- See git history for details: \`git log v${version}\`"
-        echo ""
-    done > "$entries_file"
+        # Find the previous (older) tag to determine commit range
+        local prev_tag=""
+        local found_current=false
+        while IFS= read -r t; do
+            local t_version="${t#v}"
+            if [ "$t_version" = "$version" ]; then
+                found_current=true
+                continue
+            fi
+            if [ "$found_current" = true ]; then
+                prev_tag="$t"
+                break
+            fi
+        done <<< "$all_tags"
+        
+        # Determine git range for commits
+        local git_range
+        if [ -n "$prev_tag" ]; then
+            git_range="$prev_tag..$tag"
+            print_color "$CYAN" "  Range: $prev_tag..$tag" >&2
+        else
+            git_range="$tag"
+            print_color "$CYAN" "  Range: all commits up to $tag" >&2
+        fi
+        
+        # Use add_version_section to generate real commits
+        add_version_section "$version" "$tag_date" "$git_range" "$entries_file"
+    done
     
-    # Rebuild changelog: everything before footer + new entries + footer
+    # Insert new entries into CHANGELOG before footer
     local temp_file=$(mktemp)
+    
+    # Get everything before footer (excluding footer line)
     sed -n '1,/^---/p' "$CHANGELOG_FILE" | sed '$d' > "$temp_file"
+    
+    # Add new version sections
     cat "$entries_file" >> "$temp_file"
+    
+    # Add footer back
     sed -n '/^---/,$p' "$CHANGELOG_FILE" >> "$temp_file"
     
     mv "$temp_file" "$CHANGELOG_FILE"
     rm -f "$entries_file" "$CHANGELOG_BACKUP"
     
-    print_color "$YELLOW" "Note: Added versions before footer. You may want to manually reorder for chronological sorting." >&2
-    print_color "$GREEN" "CHANGELOG synchronized with git tags!" >&2
+    print_color "$GREEN" "✓ CHANGELOG synchronized with git tags (real commits added)!" >&2
 }
-
-# Get the latest tag
 get_latest_tag() {
     git describe --tags --abbrev=0 2>/dev/null || echo ""
 }
@@ -561,20 +595,27 @@ update_changelog() {
         echo "# Changelog"
         echo ""
         
-        # Add sections in order
+        # Add Unreleased section if we have content
         local has_content=false
         for section in "${sections[@]}"; do
             if [ -n "${merged_sections[$section]}" ]; then
                 has_content=true
-                echo "### $section"
-                echo "${merged_sections[$section]}"
-                echo ""
+                break
             fi
         done
         
-        # If we had content, add extra newline before versions
         if [ "$has_content" = "true" ]; then
+            echo "## [Unreleased]"
             echo ""
+            
+            # Add sections in order
+            for section in "${sections[@]}"; do
+                if [ -n "${merged_sections[$section]}" ]; then
+                    echo "### $section"
+                    echo "${merged_sections[$section]}"
+                    echo ""
+                fi
+            done
         fi
         
         # Append all version sections (everything from first ## [version])
