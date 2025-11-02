@@ -1042,6 +1042,14 @@ check_git_clean() {
 stage_release_files() {
     git add CHANGELOG.md VERSION README.md 2>/dev/null || true
 }
+
+# Build conventional commit message for release
+# Args: version (e.g., "1.2.3")
+# Returns: formatted commit message
+build_release_commit_message() {
+    local version=$1
+    echo "chore: release v${version}"
+}
 create_release_tag() {
     local version=$1
     git tag -a "v${version}" -m "Release version ${version}"
@@ -1050,7 +1058,8 @@ create_release_tag() {
 create_release_commit() {
     local version=$1
     stage_release_files
-    git commit -m "chore: release v${version}"
+    local message=$(build_release_commit_message "$version")
+    git commit -m "$message"
 }
 
 main() {
