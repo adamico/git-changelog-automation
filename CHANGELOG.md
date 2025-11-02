@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.3] - 2025-11-02
+
+
+
+### Fixed
+- fix: add missing grep -- separators in get_existing_commits and deduplicate_commits
+- fix: prevent grep errors when commit messages contain special characters
+
+### Documentation
+- docs: add todo for fixing grep error messages
+
+### Tests
+- test: add test for commits with special characters that could break grep
+
+
 ## [1.3.2] - 2025-11-02
 
 
