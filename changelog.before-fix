@@ -109,44 +109,80 @@ add_missing_versions() {
     # Backup current changelog
     cp "$CHANGELOG_FILE" "$CHANGELOG_BACKUP"
     
-    # Sort missing versions in descending order
+    # Sort missing versions in descending order (newest first)
     local sorted_missing=$(echo "$missing_versions" | grep -v '^$' | sort -V -r)
     
-    # Create entries for each missing version
+    # Get all tags sorted by version
+    local all_tags=$(git tag -l --sort=-version:refname | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$')
+    
+    # Create entries for each missing version with real commits
     local entries_file=$(mktemp)
     echo "$sorted_missing" | while read -r version; do
-        local tag_date=$(git log -1 --format=%ad --date=short "v${version}" 2>/dev/null || git log -1 --format=%ad --date=short "${version}" 2>/dev/null)
+        [ -z "$version" ] && continue
+        
+        local tag="v${version}"
+        # Try with v prefix first, then without
+        git rev-parse "$tag" >/dev/null 2>&1 || tag="${version}"
+        
+        local tag_date=$(get_tag_date "$tag")
         [ -z "$tag_date" ] && tag_date=$(date +%Y-%m-%d)
         
-        print_color "$GREEN" "Adding version $version to CHANGELOG..." >&2
+        print_color "$GREEN" "Adding version $version with real commits..." >&2
         
-        echo "## [$version] - $tag_date"
-        echo ""
-        echo "### Added"
-        echo "- See git history for details: \`git log v${version}\`"
-        echo ""
-    done > "$entries_file"
+        # Find the previous (older) tag to determine commit range
+        local prev_tag=""
+        local found_current=false
+        while IFS= read -r t; do
+            local t_version="${t#v}"
+            if [ "$t_version" = "$version" ]; then
+                found_current=true
+                continue
+            fi
+            if [ "$found_current" = true ]; then
+                prev_tag="$t"
+                break
+            fi
+        done <<< "$all_tags"
+        
+        # Determine git range for commits
+        local git_range
+        if [ -n "$prev_tag" ]; then
+            git_range="$prev_tag..$tag"
+            print_color "$CYAN" "  Range: $prev_tag..$tag" >&2
+        else
+            git_range="$tag"
+            print_color "$CYAN" "  Range: all commits up to $tag" >&2
+        fi
+        
+        # Use add_version_section to generate real commits
+        add_version_section "$version" "$tag_date" "$git_range" "$entries_file"
+    done
     
-    # Rebuild changelog: everything before footer + new entries + footer
+    # Insert new entries into CHANGELOG before footer
     local temp_file=$(mktemp)
+    
+    # Get everything before footer (excluding footer line)
     sed -n '1,/^---/p' "$CHANGELOG_FILE" | sed '$d' > "$temp_file"
+    
+    # Add new version sections
     cat "$entries_file" >> "$temp_file"
+    
+    # Add footer back
     sed -n '/^---/,$p' "$CHANGELOG_FILE" >> "$temp_file"
     
     mv "$temp_file" "$CHANGELOG_FILE"
     rm -f "$entries_file" "$CHANGELOG_BACKUP"
     
-    print_color "$YELLOW" "Note: Added versions before footer. You may want to manually reorder for chronological sorting." >&2
-    print_color "$GREEN" "CHANGELOG synchronized with git tags!" >&2
+    print_color "$GREEN" "✓ CHANGELOG synchronized with git tags (real commits added)!" >&2
 }
-
-# Get the latest tag
 get_latest_tag() {
     git describe --tags --abbrev=0 2>/dev/null || echo ""
 }
 
 # Clean duplicate entries from CHANGELOG
 clean_duplicates() {
+    local create_backup="${1:-true}"  # Default to true for backward compatibility
+    
     if [ ! -f "$CHANGELOG_FILE" ]; then
         print_color "$YELLOW" "No CHANGELOG.md found"
         return 1
@@ -175,9 +211,17 @@ clean_duplicates() {
     
     if [ "$duplicates_found" -gt 0 ]; then
         print_color "$GREEN" "✓ Removed $duplicates_found duplicate entries"
-        cp "$CHANGELOG_FILE" "${CHANGELOG_FILE}.backup"
+        
+        # Create timestamped backup if requested
+        if [ "$create_backup" = "true" ]; then
+            local timestamp=$(date +%Y%m%d_%H%M%S)
+            local backup_file="${CHANGELOG_FILE}.backup_${timestamp}"
+            cp "$CHANGELOG_FILE" "$backup_file"
+            print_color "$GREEN" "✓ Backup saved: $backup_file"
+        fi
+        
         mv "$temp_clean" "$CHANGELOG_FILE"
-        print_color "$GREEN" "✓ CHANGELOG cleaned (backup saved)"
+        print_color "$GREEN" "✓ CHANGELOG cleaned"
         return 0
     else
         print_color "$GREEN" "✓ No duplicates found"
@@ -198,7 +242,7 @@ extract_commits_by_type() {
     local git_range=$1
     local commit_type=$2
     
-    git log --pretty=format:"%s" "$git_range" 2>/dev/null | grep -E "^${commit_type}:" || true
+    git log --pretty=format:"%s" "$git_range" 2>/dev/null | grep -E -- "^${commit_type}:" || true
 }
 
 # Add a changelog section with commits
@@ -291,36 +335,36 @@ rebuild_changelog() {
     for tag in $tags; do
         tag_count=$((tag_count + 1))
         
-        local tag_date=$(get_tag_date "$tag")
-        local version="${tag#v}"
-        
-        print_color "$CYAN" "Processing $tag ($version) - $tag_date..."
-        
-        # Handle first tag (check for unreleased commits)
+        # Handle first tag (check for unreleased commits, then continue)
         if [ -z "$prev_tag" ]; then
             if [ "$(git rev-parse HEAD 2>/dev/null)" != "$(git rev-parse "$tag" 2>/dev/null)" ]; then
                 # Add unreleased section
-                print_color "$CYAN" "  Adding unreleased changes after $tag..."
+                print_color "$CYAN" "Adding unreleased changes after $tag..."
                 add_version_section "Unreleased" "$(date +%Y-%m-%d)" "$tag..HEAD" "$CHANGELOG_FILE"
             fi
             prev_tag="$tag"
+            continue  # Skip to next iteration - we'll process this tag then
         fi
         
-        # Determine git range for this version
-        local git_range
-        if [ "$tag" = "$prev_tag" ]; then
-            # First tag - all commits up to this tag
-            git_range="$tag"
-        else
-            # Subsequent tags - commits between tags
-            git_range="$tag..$prev_tag"
-            prev_tag="$tag"
-        fi
+        # Now process the previous (newer) tag using current tag as range boundary
+        local prev_version="${prev_tag#v}"
+        local prev_date=$(get_tag_date "$prev_tag")
+        local git_range="$tag..$prev_tag"
         
-        # Add this version's section
-        add_version_section "$version" "$tag_date" "$git_range" "$CHANGELOG_FILE"
+        print_color "$CYAN" "Processing $prev_tag ($prev_version) - $prev_date..."
+        add_version_section "$prev_version" "$prev_date" "$git_range" "$CHANGELOG_FILE"
+        
+        # Remember current tag for next iteration
+        prev_tag="$tag"
     done
     
+    # After loop: process the last (oldest) tag
+    if [ -n "$prev_tag" ]; then
+        local last_version="${prev_tag#v}"
+        local last_date=$(get_tag_date "$prev_tag")
+        print_color "$CYAN" "Processing $prev_tag ($last_version) - $last_date..."
+        add_version_section "$last_version" "$last_date" "$prev_tag" "$CHANGELOG_FILE"
+    fi
     print_color "$GREEN" "✓ Rebuilt CHANGELOG with $tag_count versions"
     if [ -f "${CHANGELOG_FILE}.backup" ]; then
         print_color "$GREEN" "✓ Backup saved as ${CHANGELOG_FILE}.backup"
@@ -333,7 +377,7 @@ get_existing_commits() {
         return 0
     fi
     # Extract all lines that look like commit messages (start with "- " and have conventional prefix)
-    grep -E "^- (feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert):" "$CHANGELOG_FILE" 2>/dev/null || true
+    grep -E -- "^- (feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert):" "$CHANGELOG_FILE" 2>/dev/null || true
 }
 
 # Generate changelog
@@ -373,17 +417,17 @@ generate_changelog() {
     fi
     
     # Extract commits by type
-    local feat_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^feat:" || true)
-    local fix_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^fix:" || true)
-    local docs_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^docs:" || true)
-    local refactor_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^refactor:" || true)
-    local perf_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^perf:" || true)
-    local test_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^test:" || true)
-    local build_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^build:" || true)
-    local ci_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^ci:" || true)
-    local style_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^style:" || true)
-    local chore_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^chore:" || true)
-    local revert_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E "^revert:" || true)
+    local feat_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^feat:" || true)
+    local fix_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^fix:" || true)
+    local docs_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^docs:" || true)
+    local refactor_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^refactor:" || true)
+    local perf_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^perf:" || true)
+    local test_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^test:" || true)
+    local build_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^build:" || true)
+    local ci_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^ci:" || true)
+    local style_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^style:" || true)
+    local chore_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^chore:" || true)
+    local revert_commits=$(git log --pretty=format:"%s" "$git_range" | grep -E -- "^revert:" || true)
     
     
     # Get existing commits from CHANGELOG for deduplication
@@ -398,7 +442,7 @@ generate_changelog() {
         echo "$commits" | while IFS= read -r commit; do
             [ -z "$commit" ] && continue
             # Check if this exact commit message is already in CHANGELOG
-            echo "$existing_commits" | grep -Fxq "- $commit" || echo "$commit"
+            echo "$existing_commits" | grep -Fxq -- "- $commit" || echo "$commit"
         done
     }
     
@@ -534,20 +578,33 @@ update_changelog() {
     # Extract sections from generated file
     local sections=("Added" "Fixed" "Changed" "Performance" "Documentation" "Style" "Tests" "Build" "CI/CD" "Chores" "Reverted")
     
-    # Function to extract commits for a section
-    extract_section() {
+    # Function to extract commits for a section from generated file
+    extract_section_from_generated() {
         local section=$1
         local file=$2
         sed -n "/^### $section/,/^### \|^## \|^$/p" "$file" | grep "^- " || true
     }
     
-    # Merge sections from existing and new
+    # Function to extract commits ONLY from Unreleased section of existing CHANGELOG
+    extract_unreleased_section() {
+        local section=$1
+        if [ ! -f "$CHANGELOG_FILE" ]; then
+            return 0
+        fi
+        # Extract only from Unreleased section (between ## [Unreleased] and next ## [version])
+        sed -n '/^## \[Unreleased\]/,/^## \[[0-9]/p' "$CHANGELOG_FILE" | \
+            sed -n "/^### $section/,/^### \|^## \|^$/p" | \
+            grep "^- " || true
+    }
+    
+    # Merge sections: existing unreleased + new
     declare -A merged_sections
     for section in "${sections[@]}"; do
-        local existing=$(extract_section "$section" "$CHANGELOG_FILE" 2>/dev/null || true)
-        local new=$(extract_section "$section" "$generated_file" 2>/dev/null || true)
+        local existing=$(extract_unreleased_section "$section" 2>/dev/null || true)
+        local new=$(extract_section_from_generated "$section" "$generated_file" 2>/dev/null || true)
         
         if [ -n "$existing" ] && [ -n "$new" ]; then
+            # Merge and deduplicate
             merged_sections["$section"]=$(echo -e "$existing\n$new" | sort -u)
         elif [ -n "$existing" ]; then
             merged_sections["$section"]="$existing"
@@ -561,20 +618,27 @@ update_changelog() {
         echo "# Changelog"
         echo ""
         
-        # Add sections in order
+        # Add Unreleased section if we have content
         local has_content=false
         for section in "${sections[@]}"; do
             if [ -n "${merged_sections[$section]}" ]; then
                 has_content=true
-                echo "### $section"
-                echo "${merged_sections[$section]}"
-                echo ""
+                break
             fi
         done
         
-        # If we had content, add extra newline before versions
         if [ "$has_content" = "true" ]; then
+            echo "## [Unreleased]"
             echo ""
+            
+            # Add sections in order
+            for section in "${sections[@]}"; do
+                if [ -n "${merged_sections[$section]}" ]; then
+                    echo "### $section"
+                    echo "${merged_sections[$section]}"
+                    echo ""
+                fi
+            done
         fi
         
         # Append all version sections (everything from first ## [version])
@@ -586,7 +650,6 @@ update_changelog() {
     mv "$CHANGELOG_FILE.new" "$CHANGELOG_FILE"
     print_color "$GREEN" "Updated $CHANGELOG_FILE" >&2
 }
-
 # Interactive mode
 interactive_update() {
     local auto_accept=$1
@@ -810,6 +873,8 @@ show_help() {
     print_color "$YELLOW" "USAGE:"
     echo "  changelog [OPTIONS] [from_tag] [to_tag]"
     echo "  changelog --release VERSION [DATE]"
+    echo "  changelog --install"
+    echo "  changelog --uninstall"
     echo "  changelog --install-hooks"
     echo "  changelog --clean"
     echo "  changelog --rebuild"
@@ -826,8 +891,11 @@ show_help() {
     print_color "$GREEN" "  changelog --release v1.2.0 2025-11-01 ${NC}# Release with specific date"
     print_color "$GREEN" "  changelog -r 1.2.0 -y               ${NC}  # Release and auto-accept"
     echo ""
+    print_color "$GREEN" "  changelog --install                 ${NC}  # Install script to ~/.local/bin"
+    print_color "$GREEN" "  changelog --uninstall               ${NC}  # Remove script from ~/.local/bin"
     print_color "$GREEN" "  changelog --install-hooks           ${NC}  # Install git hooks for validation"
-    print_color "$GREEN" "  changelog --clean                   ${NC}  # Remove duplicate entries from CHANGELOG"
+    print_color "$GREEN" "  changelog --clean                   ${NC}  # Remove duplicates (with timestamped backup)"
+    print_color "$GREEN" "  changelog --clean --no-backup       ${NC}  # Remove duplicates without backup"
     print_color "$GREEN" "  changelog --rebuild                 ${NC}  # Rebuild entire CHANGELOG from git tags"
     echo ""
     print_color "$YELLOW" "AUTOMATIC UPDATES:"
@@ -841,6 +909,10 @@ show_help() {
     echo "  --release VERSION [DATE], -r VERSION [DATE]"
     echo "                    Convert unreleased section to a version release"
     echo "                    DATE defaults to today if not specified"
+    echo "  --backup          Create timestamped backup when using --clean (default)"
+    echo "  --no-backup       Skip backup creation when using --clean"
+    echo "  --install         Install script to ~/.local/bin"
+    echo "  --uninstall       Remove script from ~/.local/bin"
     echo "  --install-hooks   Install git hooks for commit validation"
     echo "  --version, -v     Show version information"
     echo "  --help, -h        Show this help message"
@@ -875,19 +947,201 @@ show_help() {
 }
 
 # Main
+# Install changelog script to ~/.local/bin
+install_script() {
+    local script_path="$(readlink -f "$0")"
+    local install_dir="$HOME/.local/bin"
+    local install_path="$install_dir/changelog"
+    
+    # Create directory if it doesnt exist
+    if [ ! -d "$install_dir" ]; then
+        mkdir -p "$install_dir" || {
+            print_color "$RED" "Error: Failed to create directory $install_dir"
+            return 1
+        }
+        print_color "$GREEN" "Created directory: $install_dir"
+    fi
+    
+    # Check if already installed
+    if [ -f "$install_path" ]; then
+        print_color "$YELLOW" "Warning: changelog already exists at $install_path"
+        read -p "Overwrite? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            print_color "$YELLOW" "Installation cancelled"
+            return 1
+        fi
+    fi
+    
+    # Copy script
+    cp "$script_path" "$install_path" || {
+        print_color "$RED" "Error: Failed to copy script"
+        return 1
+    }
+    
+    # Make executable
+    chmod +x "$install_path" || {
+        print_color "$RED" "Error: Failed to make script executable"
+        return 1
+    }
+    
+    print_color "$GREEN" "✓ Installed changelog to $install_path"
+    
+    # Check if in PATH
+    if [[ ":$PATH:" != *":$install_dir:"* ]]; then
+        print_color "$YELLOW" "Note: $install_dir is not in your PATH"
+        print_color "$YELLOW" "Add this line to your ~/.bashrc or ~/.zshrc:"
+        print_color "$CYAN" "  export PATH="$HOME/.local/bin:$PATH""
+    fi
+    
+    return 0
+}
+
+# Uninstall changelog script from ~/.local/bin
+uninstall_script() {
+    local install_path="$HOME/.local/bin/changelog"
+    
+    if [ ! -f "$install_path" ]; then
+        print_color "$YELLOW" "changelog is not installed at $install_path"
+        return 1
+    fi
+    
+    print_color "$YELLOW" "This will remove: $install_path"
+    read -p "Continue? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        print_color "$YELLOW" "Uninstallation cancelled"
+        return 1
+    fi
+    
+    rm "$install_path" || {
+        print_color "$RED" "Error: Failed to remove script"
+        return 1
+    }
+    
+    print_color "$GREEN" "✓ Removed changelog from $install_path"
+    return 0
+}
+
+
+# Git automation functions
+
+# Check if git repo is clean
+check_git_status() {
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+        print_color "$RED" "Error: Not a git repository"
+        return 1
+    fi
+    
+    # Check for staged changes
+    if ! git diff --cached --quiet; then
+        print_color "$YELLOW" "Warning: You have staged changes"
+        print_color "$YELLOW" "The release will only commit CHANGELOG.md, VERSION, and README.md"
+    fi
+    
+    return 0
+}
+
+# Create git commit for release
+create_release_commit() {
+    local version=$1
+    
+    # Ensure we're in a git repo
+    if ! check_git_status; then
+        return 1
+    fi
+    
+    # Stage the files we modified
+    local files_to_commit=()
+    
+    if [ -f "$CHANGELOG_FILE" ]; then
+        git add "$CHANGELOG_FILE"
+        files_to_commit+=("$CHANGELOG_FILE")
+    fi
+    
+    if [ -f "VERSION" ]; then
+        git add "VERSION"
+        files_to_commit+=("VERSION")
+    fi
+    
+    if [ -f "README.md" ]; then
+        # Check if README was modified (version badge)
+        if git diff HEAD README.md >/dev/null 2>&1; then
+            git add "README.md"
+            files_to_commit+=("README.md")
+        fi
+    fi
+    
+    if [ ${#files_to_commit[@]} -eq 0 ]; then
+        print_color "$YELLOW" "No files to commit"
+        return 1
+    fi
+    
+    # Create commit
+    local commit_msg="chore: release v${version}"
+    if git commit -m "$commit_msg"; then
+        print_color "$GREEN" "✓ Created commit: $commit_msg"
+        print_color "$GREEN" "  Files: ${files_to_commit[*]}"
+        return 0
+    else
+        print_color "$RED" "Failed to create commit"
+        return 1
+    fi
+}
+
+# Create git tag for release
+create_release_tag() {
+    local version=$1
+    local tag_name="v${version}"
+    
+    # Ensure we're in a git repo
+    if ! git rev-parse --git-dir > /dev/null 2>&1; then
+        print_color "$RED" "Error: Not a git repository"
+        return 1
+    fi
+    
+    # Check if tag already exists
+    if git tag -l "$tag_name" | grep -q "$tag_name"; then
+        print_color "$YELLOW" "Warning: Tag $tag_name already exists"
+        return 1
+    fi
+    
+    # Create annotated tag
+    local tag_message="Release version $version"
+    if git tag -a "$tag_name" -m "$tag_message"; then
+        print_color "$GREEN" "✓ Created tag: $tag_name"
+        return 0
+    else
+        print_color "$RED" "Failed to create tag"
+        return 1
+    fi
+}
+
 main() {
     local from_ref=""
     local to_ref=""
     local auto_accept="false"
+auto_commit="false"
+auto_tag="false"
     local release_mode="false"
     local release_version=""
     local release_date=""
+    local backup_on_clean="true"
+    local clean_mode="false"
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
             --non-interactive|--auto-accept|-y)
                 auto_accept="true"
+                shift
+                ;;
+            --backup)
+                backup_on_clean="true"
+                shift
+                ;;
+            --no-backup)
+                backup_on_clean="false"
                 shift
                 ;;
             --release|-r)
@@ -907,9 +1161,17 @@ main() {
                 install_hooks
                 exit $?
                 ;;
-            --clean)
-                clean_duplicates
+            --install)
+                install_script
                 exit $?
+                ;;
+            --uninstall)
+                uninstall_script
+                exit $?
+                ;;
+            --clean)
+                clean_mode="true"
+                shift
                 ;;
             --rebuild)
                 rebuild_changelog
@@ -934,6 +1196,12 @@ main() {
         esac
     done
     
+    # Handle clean mode
+    if [ "$clean_mode" = "true" ]; then
+        clean_duplicates "$backup_on_clean"
+        exit $?
+    fi
+    
     print_color "$BLUE" "=== Git Changelog Automation v$VERSION ==="
     echo ""
     
@@ -943,6 +1211,16 @@ main() {
         echo ""
     fi
     
+    # Validate --commit and --tag flags
+    if [ "$auto_commit" = "true" ] && [ "$release_mode" != "true" ]; then
+        print_color "$RED" "Error: --commit can only be used with --release"
+        return 1
+    fi
+    if [ "$auto_tag" = "true" ] && [ "$release_mode" != "true" ]; then
+        print_color "$RED" "Error: --tag can only be used with --release"
+        return 1
+    fi
+
     # Handle release mode
     if [ "$release_mode" = "true" ]; then
         if [ -z "$release_version" ]; then
@@ -960,6 +1238,15 @@ main() {
                 rm -f "$CHANGELOG_BACKUP"
             else
                 interactive_update "$auto_accept"
+            # Handle git automation
+            if [ "$auto_commit" = "true" ]; then
+                echo ""
+                create_release_commit "$release_version"
+            fi
+            if [ "$auto_tag" = "true" ]; then
+                echo ""
+                create_release_tag "$release_version"
+            fi
             fi
         else
             return 1
@@ -979,6 +1266,15 @@ main() {
         # Interactive review
         if [ -f "$CHANGELOG_BACKUP" ]; then
             interactive_update "$auto_accept"
+            # Handle git automation
+            if [ "$auto_commit" = "true" ]; then
+                echo ""
+                create_release_commit "$release_version"
+            fi
+            if [ "$auto_tag" = "true" ]; then
+                echo ""
+                create_release_tag "$release_version"
+            fi
         else
             print_color "$GREEN" "Changelog created successfully!"
         fi

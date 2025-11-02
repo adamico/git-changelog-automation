@@ -1023,17 +1023,6 @@ uninstall_script() {
     return 0
 }
 
-create_release_tag() {
-    local version=$1
-    git tag -a "v${version}" -m "Release version ${version}"
-}
-
-create_release_commit() {
-    local version=$1
-    git add CHANGELOG.md VERSION README.md 2>/dev/null
-    git commit -m "chore: release v${version}"
-}
-
 main() {
     local from_ref=""
     local to_ref=""
@@ -1071,14 +1060,6 @@ main() {
                         shift
                     fi
                 fi
-                ;;
-            --commit|-c)
-                auto_commit="true"
-                shift
-                ;;
-            --tag|-t)
-                auto_tag="true"
-                shift
                 ;;
             --install-hooks)
                 install_hooks
@@ -1134,16 +1115,6 @@ main() {
         echo ""
     fi
     
-    # Validate flags
-    if [ "$auto_commit" = "true" ] && [ "$release_mode" != "true" ]; then
-        print_color "$RED" "Error: --commit requires --release"
-        return 1
-    fi
-    if [ "$auto_tag" = "true" ] && [ "$release_mode" != "true" ]; then
-        print_color "$RED" "Error: --tag requires --release"
-        return 1
-    fi
-
     # Handle release mode
     if [ "$release_mode" = "true" ]; then
         if [ -z "$release_version" ]; then
@@ -1158,12 +1129,6 @@ main() {
         if release_version "$release_version" "$release_date"; then
             if [ "$auto_accept" = "true" ]; then
                 print_color "$GREEN" "Release completed (auto-accepted)"
-            if [ "$auto_commit" = "true" ]; then
-                create_release_commit "$release_version"
-            fi
-            if [ "$auto_tag" = "true" ]; then
-                create_release_tag "$release_version"
-            fi
                 rm -f "$CHANGELOG_BACKUP"
             else
                 interactive_update "$auto_accept"
