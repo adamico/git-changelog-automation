@@ -555,6 +555,7 @@ test_rebuild_from_tags() {
     git config user.email "test@example.com"
     git config user.name "Test User"
     git config tag.gpgsign false
+    git config commit.gpgsign false
     
     # Create some commits and tags
     echo "v1" > file1.txt
@@ -605,6 +606,8 @@ test_rebuild_from_tags() {
 
 # Main test runner
 test_rebuild_commit_isolation() {
+    test_default_fills_missing_tags
+    test_default_adds_unreleased_section
     print_color "$YELLOW" "Test: Rebuild correctly isolates commits per version"
     
     local test_dir=$(mktemp -d)
@@ -616,6 +619,7 @@ test_rebuild_commit_isolation() {
     git config user.email "test@example.com"
     git config user.name "Test User"
     git config tag.gpgsign false
+    git config commit.gpgsign false
     
     # Create v1.0.0 with ONE commit
     echo "v1" > file1.txt
@@ -690,6 +694,152 @@ test_rebuild_commit_isolation() {
     rm -rf "$test_dir"
 }
 
+test_default_fills_missing_tags() {
+    print_color "$YELLOW" "Test: Default execution fills missing tagged versions with real commits"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Initialize git repo
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git config tag.gpgsign false
+    git config commit.gpgsign false
+    
+    # Create v1.0.0
+    echo "v1" > file1.txt
+    git add file1.txt
+    git commit -q -m "feat: initial feature"
+    git tag v1.0.0
+    
+    # Create v1.1.0 (will be missing from CHANGELOG initially)
+    echo "v1.1" > file2.txt
+    git add file2.txt
+    git commit -q -m "feat: add new feature"
+    echo "v1.1-fix" > file3.txt
+    git add file3.txt
+    git commit -q -m "fix: fix critical bug"
+    git tag v1.1.0
+    
+    # Create incomplete CHANGELOG with only v1.0.0 (v1.1.0 is missing)
+    cat > CHANGELOG.md << 'CHANGELOG'
+# Changelog
+
+## [1.0.0] - 2025-01-01
+
+### Added
+- feat: initial feature
+
+---
+CHANGELOG
+    
+    # Run default execution (no --rebuild flag)
+    CHANGELOG_FILE="$test_dir/CHANGELOG.md" "$GENERATE_SCRIPT" -y >/dev/null 2>&1 || true
+    
+    if [ -f "$test_dir/CHANGELOG.md" ]; then
+        local content=$(cat "$test_dir/CHANGELOG.md")
+        
+        # Should have v1.1.0 section now
+        assert_contains "$content" "[1.1.0]" "Has v1.1.0 section"
+        
+        # v1.1.0 should have REAL commits, not placeholder
+        assert_contains "$content" "feat: add new feature" "v1.1.0 has real feature commit"
+        assert_contains "$content" "fix: fix critical bug" "v1.1.0 has real fix commit"
+        assert_not_contains "$content" "See git history for details" "No placeholder text in v1.1.0"
+        
+        # Should still have v1.0.0
+        assert_contains "$content" "[1.0.0]" "Still has v1.0.0 section"
+        assert_contains "$content" "feat: initial feature" "v1.0.0 has its commit"
+    else
+        print_color "$RED" "  ✗ CHANGELOG.md was not modified"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
+
+test_default_adds_unreleased_section() {
+    print_color "$YELLOW" "Test: Default execution adds Unreleased section for commits after last tag"
+    
+    local test_dir=$(mktemp -d)
+    local orig_dir=$(pwd)
+    cd "$test_dir"
+    
+    # Initialize git repo
+    git init -q
+    git config user.email "test@example.com"
+    git config user.name "Test User"
+    git config tag.gpgsign false
+    git config commit.gpgsign false
+    
+    # Create v1.0.0
+    echo "v1" > file1.txt
+    git add file1.txt
+    git commit -q -m "feat: initial feature"
+    git tag v1.0.0
+    
+    # Create CHANGELOG with v1.0.0
+    cat > CHANGELOG.md << 'CHANGELOG'
+# Changelog
+
+## [1.0.0] - 2025-01-01
+
+### Added
+- feat: initial feature
+
+---
+CHANGELOG
+    
+    # Add new commits AFTER the tag (unreleased)
+    echo "new-feature" > file2.txt
+    git add file2.txt
+    git commit -q -m "feat: add unreleased feature"
+    echo "new-fix" > file3.txt
+    git add file3.txt
+    git commit -q -m "fix: unreleased bugfix"
+    
+    # Run default execution (no --rebuild flag)
+    CHANGELOG_FILE="$test_dir/CHANGELOG.md" "$GENERATE_SCRIPT" -y >/dev/null 2>&1 || true
+    
+    if [ -f "$test_dir/CHANGELOG.md" ]; then
+        local content=$(cat "$test_dir/CHANGELOG.md")
+        
+        # Should have Unreleased section
+        assert_contains "$content" "[Unreleased]" "Has Unreleased section"
+        
+        # Unreleased section should have the new commits
+        assert_contains "$content" "feat: add unreleased feature" "Unreleased has new feature"
+        assert_contains "$content" "fix: unreleased bugfix" "Unreleased has new fix"
+        
+        # Should still have v1.0.0
+        assert_contains "$content" "[1.0.0]" "Still has v1.0.0 section"
+        assert_contains "$content" "feat: initial feature" "v1.0.0 has its commit"
+        
+        # Unreleased should come BEFORE v1.0.0 in the file
+        local unreleased_line=$(grep -n "\[Unreleased\]" "$test_dir/CHANGELOG.md" | cut -d: -f1)
+        local v100_line=$(grep -n "\[1.0.0\]" "$test_dir/CHANGELOG.md" | cut -d: -f1)
+        if [ "$unreleased_line" -lt "$v100_line" ]; then
+            TESTS_PASSED=$((TESTS_PASSED + 1))
+            print_color "$GREEN" "  ✓ Unreleased section appears before v1.0.0"
+        else
+            TESTS_FAILED=$((TESTS_FAILED + 1))
+            print_color "$RED" "  ✗ Unreleased section should be before v1.0.0"
+        fi
+        TESTS_RUN=$((TESTS_RUN + 1))
+    else
+        print_color "$RED" "  ✗ CHANGELOG.md was not modified"
+        TESTS_FAILED=$((TESTS_FAILED + 1))
+    fi
+    
+    # Cleanup
+    cd "$orig_dir" 2>/dev/null || cd /tmp
+    rm -rf "$test_dir"
+}
+
 main() {
     print_color "$YELLOW" "=== Changelog Generation Script Tests ==="
     echo ""
@@ -716,6 +866,8 @@ main() {
     test_readme_badge_skipped_when_absent
     test_rebuild_from_tags
     test_rebuild_commit_isolation
+    test_default_fills_missing_tags
+    test_default_adds_unreleased_section
     # TODO: Re-enable these tests after implementing/fixing release and sync features
     # test_release_functionality
     # test_sync_validation
