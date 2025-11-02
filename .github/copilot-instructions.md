@@ -195,3 +195,232 @@ commits=$(deduplicate_commits "$commits")
 ---
 
 *Remember: The tool exists to automate CHANGELOG management. If you're manually editing CHANGELOGs, the tool needs improvement, not the CHANGELOG.*
+
+## Test-Driven Development (TDD)
+
+### TDD Philosophy for This Project
+This project follows strict TDD practices. All new features must be developed using the RED-GREEN-REFACTOR cycle with **incremental baby steps**.
+
+### The Problem with Large TDD Cycles
+**What We Learned:** Implementing the `--commit` and `--tag` flags taught us that trying to write all tests at once and implement everything together leads to:
+- Hard-to-debug issues (e.g., bash exit code capture, `set -e` interactions, command substitution quirks)
+- Unclear failure points (which piece actually broke?)
+- Time wasted on test infrastructure instead of feature code
+- Cognitive overload trying to think about too many things simultaneously
+
+### The Baby Steps Approach (RECOMMENDED)
+
+Break features into the smallest testable units. For the `--commit` and `--tag` feature, this would have been:
+
+#### Step 1: Flag Parsing (5 minutes)
+```bash
+# Test: Does --commit flag get recognized?
+test_commit_flag_exists() {
+    output=$(./changelog --commit 2>&1 || true)
+    # Just check it doesn't error on "unknown option"
+}
+```
+**Implement:** Add `--commit|-c)` to case statement, set `auto_commit="false"` variable.
+**Run test:** Should pass. If not, fix just the parsing.
+
+#### Step 2: Validation Logic (10 minutes)
+```bash
+# Test: --commit without --release should fail
+test_commit_requires_release() {
+    result=$(./changelog --commit 2>&1)
+    [[ $? -eq 1 ]] || fail
+}
+```
+**Implement:** Add `if [ "$auto_commit" = "true" ] && [ "$release_mode" != "true" ]; then error; fi`
+**Run test:** Should pass. Debug just validation logic if needed.
+
+#### Step 3: File Staging (10 minutes)
+```bash
+# Test: Files get staged when --commit is used
+test_stages_files() {
+    # Don't commit yet, just test git add works
+    git diff --cached --name-only | grep CHANGELOG.md
+}
+```
+**Implement:** Add `git add CHANGELOG.md VERSION README.md`
+**Run test:** Should pass. Fix just staging logic.
+
+#### Step 4: Commit Creation (10 minutes)
+```bash
+# Test: Commit has correct message format
+test_commit_message() {
+    last_commit=$(git log -1 --pretty=%B)
+    [[ "$last_commit" == "chore: release v1.2.0" ]] || fail
+}
+```
+**Implement:** Add `git commit -m "chore: release v${version}"`
+**Run test:** Should pass. Fix just commit logic.
+
+#### Step 5: Repeat for --tag (4 steps × 10 min)
+
+**Total:** ~90 minutes with clear progress markers vs. 3+ hours debugging monolithic tests.
+
+### Key TDD Principles for Bash Scripts
+
+#### 1. One Assertion Per Test
+```bash
+# BAD: Multiple things tested at once
+test_commit_and_tag() {
+    # Tests commit message, tag creation, file staging, error handling
+}
+
+# GOOD: Focused single assertion
+test_commit_message_format() {
+    assert_equals "chore: release v1.0.0" "$(git log -1 --pretty=%B)"
+}
+```
+
+#### 2. Separate Test Files by Concern
+```bash
+tests/
+├── test_flag_parsing.sh      # Just argument parsing
+├── test_validation.sh         # Just validation logic
+├── test_file_operations.sh    # Just git add/commit/tag
+├── test_error_handling.sh     # Just error cases
+└── test_integration.sh        # End-to-end scenarios
+```
+
+#### 3. Fix Test Infrastructure First
+When tests fail for infrastructure reasons (not feature reasons):
+1. **STOP** implementing the feature
+2. **FIX** the test infrastructure issue in isolation
+3. **VERIFY** fix with a simple dummy test
+4. **THEN** continue with feature TDD
+
+**Example:** When we hit the `local` exit code issue:
+```bash
+# Infrastructure test (should be in tests/test_bash_helpers.sh)
+test_exit_code_capture() {
+    local result
+    output=$(exit 1)
+    result=$?  # This should be 1, not 0
+    assert_equals "1" "$result"
+}
+```
+Fix this FIRST before continuing with feature tests.
+
+#### 4. Use Descriptive Test Names
+```bash
+# BAD: Unclear what's being tested
+test_commit() { ... }
+
+# GOOD: Clear expectation
+test_commit_flag_requires_release_flag() { ... }
+test_commit_message_follows_conventional_format() { ... }
+test_commit_includes_only_release_files() { ... }
+```
+
+#### 5. Keep Tests Independent
+```bash
+# BAD: Tests depend on each other
+test_1_setup() { ... }      # Creates state
+test_2_commit() { ... }     # Uses state from test_1
+test_3_tag() { ... }        # Uses state from test_2
+
+# GOOD: Each test has own setup/teardown
+test_commit_creates_proper_message() {
+    local test_dir=$(mktemp -d)
+    cd "$test_dir"
+    # Setup git repo
+    # Run test
+    # Cleanup
+    cd / && rm -rf "$test_dir"
+}
+```
+
+### TDD Workflow Checklist
+
+For every new feature:
+
+- [ ] **Break into smallest units** (aim for 5-10 steps)
+- [ ] **Write ONE failing test** for first unit
+- [ ] **Run test** - see it RED
+- [ ] **Write minimal code** to pass (no more!)
+- [ ] **Run test** - see it GREEN
+- [ ] **Commit** with message: "feat(step-1): description"
+- [ ] **Repeat** for next unit
+- [ ] **Refactor** only after all tests pass
+- [ ] **Document** the feature
+
+### Red Flags (Stop and Decompose)
+
+If you experience any of these, your steps are too large:
+- ❌ Spending >30 minutes debugging a single test
+- ❌ Not sure which part of code is causing failure
+- ❌ Fighting with test infrastructure instead of feature logic
+- ❌ Test has >3 assertions
+- ❌ Implementation touches >2 functions
+- ❌ Can't explain test failure in one sentence
+
+**Solution:** Back up, break into smaller steps, test infrastructure separately.
+
+### Real Example: The --commit/--tag Feature
+
+**What we did (monolithic):**
+- 5 complex tests written at once
+- ~3 hours of debugging
+- Issues with bash internals, exit codes, subshells
+- Unclear which piece was broken
+
+**What we should have done (baby steps):**
+- 12 simple tests written incrementally
+- ~1.5 hours total
+- Each test takes 5-10 minutes
+- Always know exactly what's broken
+- Test infrastructure issues caught early with simple tests
+
+### Testing Bash Specifics
+
+#### Exit Code Capture
+```bash
+# WRONG: local combines with assignment
+local result=$(command)  # $? is exit of local, not command
+
+# RIGHT: Separate declaration and assignment
+local result
+result=$(command)
+local exit_code=$?  # Now captures command exit code
+```
+
+#### Command Substitution
+```bash
+# Works: Exit code preserved in subshell
+result=$(./script --flag)
+echo $?  # Gets script's exit code
+
+# Broken by: || true at end
+result=$(./script --flag || true)
+echo $?  # Always 0
+```
+
+#### set -e Interactions
+```bash
+# Test needs to capture errors without exiting
+test_error_handling() {
+    set +e  # Disable exit-on-error
+    local result
+    output=$(command_that_fails)
+    result=$?
+    set -e  # Re-enable
+    assert_equals "1" "$result"
+}
+```
+
+### When to Skip TDD
+
+TDD is not required for:
+- **Documentation** changes
+- **Trivial** refactoring (renaming, formatting)
+- **Experimental** prototypes (throw-away code)
+
+But even experiments benefit from a few smoke tests!
+
+---
+
+**Remember:** Small steps feel slower but are faster. If debugging takes longer than writing the test, your steps are too big.
+

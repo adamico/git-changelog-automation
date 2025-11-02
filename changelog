@@ -1023,6 +1023,19 @@ uninstall_script() {
     return 0
 }
 
+# Check if git repo is clean (no staged or unstaged changes)
+# Returns 0 if clean, 1 if dirty
+check_git_clean() {
+    # Check for staged/unstaged changes in tracked files
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+        return 1
+    fi
+    # Check for untracked files
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        return 1
+    fi
+    return 0
+}
 create_release_tag() {
     local version=$1
     git tag -a "v${version}" -m "Release version ${version}"
